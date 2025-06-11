@@ -256,9 +256,16 @@ class PlayStationController(xArm7GripperEnv):
         webcam=0,
         flip_view=True,
         **kwargs,
+        
     ):
         super().__init__(*args, **kwargs)
         pygame.init()
+        pygame.joystick.init()
+        if pygame.joystick.get_count() == 0:
+            raise RuntimeError("No joystick detected")
+        self.joystick = pygame.joystick.Joystick(0)
+        self.joystick.init()
+
         self.save_actions = len(save_actions) > 0
         self.save_root = save_actions
         save_path = datetime.datetime.now().strftime(f"{self.save_root}/actions_%Y-%m-%d_%H-%M-%S") + ".csv"
@@ -293,10 +300,10 @@ class PlayStationController(xArm7GripperEnv):
         self.position_step_size = 5
         self.rotation_step_size = 20
 
-        self._monitor_thread = threading.Thread(target=self._monitor_controller, args=())
-        self._monitor_thread.daemon = True
+        #self._monitor_thread = threading.Thread(target=self._monitor_controller, args=())
+        #self._monitor_thread.daemon = True
         self.lock = threading.Lock()
-        self._monitor_thread.start()
+        #self._monitor_thread.start()
 
     def setup_action_save(self):
         with open(self.action_save_path, "w") as f:
@@ -318,131 +325,153 @@ class PlayStationController(xArm7GripperEnv):
         self.setup_action_save()
         if self.save_video:
             self.video_recorder.reset()
-    def _monitor_controller(self):
-        joy=None
+            
+    # def _monitor_controller(self):
+    #     joy=None
 
-        while True:
-            for event in pygame.event.get():
-                joysticks = {}
-                # Handle hotplugging
-                if event.type == pygame.JOYDEVICEADDED:
-                    # This event will be generated when the program starts for every
-                    # joystick, filling up the list without needing to create them manually.
-                    joy = pygame.joystick.Joystick(event.device_index)
-                    joysticks[joy.get_instance_id()] = joy
-                    print("joystick added")
-                if event.type == pygame.JOYDEVICEREMOVED:
-                    del joysticks[event.instance_id]
-                    print("joystick deleted")
+    #     while True:
+    #         for event in pygame.event.get():
+    #             joysticks = {}
+    #             # Handle hotplugging
+    #             if event.type == pygame.JOYDEVICEADDED:
+    #                 # This event will be generated when the program starts for every
+    #                 # joystick, filling up the list without needing to create them manually.
+    #                 joy = pygame.joystick.Joystick(event.device_index)
+    #                 joysticks[joy.get_instance_id()] = joy
+    #                 print("joystick added")
+    #             if event.type == pygame.JOYDEVICEREMOVED:
+    #                 del joysticks[event.instance_id]
+    #                 print("joystick deleted")
 
-                # self.X = int(joy.get_button(0))
-                if joy != None:
-                    with self.lock:
-                    # print("There is hope")
-                        self.SQUARE = int(joy.get_button(3))
-                        self.TRIANGLE = int(joy.get_button(2))
-                        self.O = int(joy.get_button(1))
-                        self.LeftBumper = int(joy.get_button(4))
-                        self.RightBumper = int(joy.get_button(5))
-                        self.LeftJoystickX = joy.get_axis(0)
-                        self.LeftJoystickY = joy.get_axis(1)
-                        self.RightJoystickX = joy.get_axis(3)
-                        self.RightJoystickY = joy.get_axis(4)
-                        self.LeftTrigger = joy.get_axis(2)
-                        self.RightTrigger = joy.get_axis(5)
-                        # print(self.LeftJoystickY)
+    #             # self.X = int(joy.get_button(0))
+    #             if joy != None:
+    #                 with self.lock:
+    #                 # print("There is hope")
+    #                     self.SQUARE = int(joy.get_button(3))
+    #                     self.TRIANGLE = int(joy.get_button(2))
+    #                     self.O = int(joy.get_button(1))
+    #                     self.LeftBumper = int(joy.get_button(4))
+    #                     self.RightBumper = int(joy.get_button(5))
+    #                     self.LeftJoystickX = joy.get_axis(0)
+    #                     self.LeftJoystickY = joy.get_axis(1)
+    #                     self.RightJoystickX = joy.get_axis(3)
+    #                     self.RightJoystickY = joy.get_axis(4)
+    #                     self.LeftTrigger = joy.get_axis(2)
+    #                     self.RightTrigger = joy.get_axis(5)
+    #                     # print(self.LeftJoystickY)
 
-                        dpad = joy.get_hat(0)
-                        if dpad [0] == -1 :
-                            self.LeftDPad = 1
-                            self.RightDPad = 0
-                        elif dpad [0] == 1 :
-                            self.LeftDPad = 0
-                            self.RightDPad = 1
-                        else :
-                            self.LeftDPad = 0
-                            self.RightDPad = 0
+    #                     dpad = joy.get_hat(0)
+    #                     if dpad [0] == -1 :
+    #                         self.LeftDPad = 1
+    #                         self.RightDPad = 0
+    #                     elif dpad [0] == 1 :
+    #                         self.LeftDPad = 0
+    #                         self.RightDPad = 1
+    #                     else :
+    #                         self.LeftDPad = 0
+    #                         self.RightDPad = 0
 
-                        if dpad [1] == -1 :
-                            self.UpDPad = 1
-                            self.DownDPad = 0
-                        elif dpad [1] == 1 :
-                            self.UpDPad = 0
-                            self.DownDPad = 1
-                        else :
-                            self.UpDPad = 0
-                            self.DownDPad = 0
-                    # print("completed")
-                    # print(joy==None)
-                # else:
-                    # print("We are screwed")
+    #                     if dpad [1] == -1 :
+    #                         self.UpDPad = 1
+    #                         self.DownDPad = 0
+    #                     elif dpad [1] == 1 :
+    #                         self.UpDPad = 0
+    #                         self.DownDPad = 1
+    #                     else :
+    #                         self.UpDPad = 0
+    #                         self.DownDPad = 0
+    #                 # print("completed")
+    #                 # print(joy==None)
+    #             # else:
+    #                 # print("We are screwed")
+
     def controller_listen(self):
-        # while True:
-        with self.lock:
-            if abs(self.LeftJoystickY) > self.threshold:
-                if self.LeftJoystickY > 0:
-                    self.x_plus()
-                    self.save_action((self.pos_step_size,0,0,0,0,0))
-                    print("z-axis plus")
-                if self.LeftJoystickY < 0:
+        joystick = self.joystick
+        while True:
+            pygame.event.pump()
+
+            # Read joystick inputs
+            LeftJoystickY = joystick.get_axis(1)
+            LeftJoystickX = joystick.get_axis(0)
+            RightJoystickY = joystick.get_axis(4)
+            #RightJoystickX = joystick.get_axis(3)
+            LeftTrigger = joystick.get_axis(2)
+            RightTrigger = joystick.get_axis(5)
+            X = joystick.get_button(0)
+            SQUARE = joystick.get_button(3)
+            DPadX, DPadY = joystick.get_hat(0)
+
+            if abs(LeftJoystickY) > self.threshold:
+                if LeftJoystickY > 0:
                     self.x_minus()
-                    self.save_action((-self.pos_step_size,0,0,0,0,0))
-                    print("z-axis plus")
-            if abs(self.LeftJoystickX) > self.threshold:
-                if self.LeftJoystickX > 0:
-                    self.y_plus()
-                    self.save_action((0,self.pos_step_size,0,0,0,0))
-                    print("z-axis plus")
-                if self.LeftJoystickX < 0:
+                    self.save_action((-self.pos_step_size, 0, 0, 0, 0, 0))
+                    print("x_minus")
+                else:
+                    self.x_plus()
+                    self.save_action((self.pos_step_size, 0, 0, 0, 0, 0))
+                    print("x_plus")
+
+            if abs(LeftJoystickX) > self.threshold:
+                if LeftJoystickX > 0:
                     self.y_minus()
-                    self.save_action((0,-self.pos_step_size,0,0,0,0))
-                    print("z-axis plus")
-            if abs(self.RightJoystickY) > self.threshold:
-                if self.RightJoystickY > 0:
-                    self.z_plus()
-                    self.save_action((0,0,self.pos_step_size,0,0,0))
-                    print("z-axis plus")
-                if self.RightJoystickY < 0:
+                    self.save_action((0, -self.pos_step_size, 0, 0, 0, 0))
+                    print("y_minus")
+                else:
+                    self.y_plus()
+                    self.save_action((0, self.pos_step_size, 0, 0, 0, 0))
+                    print("y_plus")
+
+            if abs(RightJoystickY) > self.threshold:
+                if RightJoystickY > 0:
                     self.z_minus()
-                    self.save_action((0,0,-self.pos_step_size,0,0,0))
-                    print("z-axis plus")
-            if abs(self.LeftDPad-self.RightDPad) > self.threshold:
-                if self.LeftDPad > 0:
+                    self.save_action((0, 0, -self.pos_step_size, 0, 0, 0))
+                    print("z_minus")
+                else:
+                    self.z_plus()
+                    self.save_action((0, 0, self.pos_step_size, 0, 0, 0))
+                    print("z_plus")
+
+            if abs(DPadX) > self.threshold:
+                if DPadX > 0:
                     self.a_minus()
-                    self.save_action((0,0,0,self.rot_step_size,0,0))
-                    print("z-axis plus")
-                if self.RightDPad > 0:
+                    self.save_action((0, 0, 0, self.rot_step_size, 0, 0))
+                    print("a_minus")
+                else:
                     self.a_plus()
-                    self.save_action((0,0,0,-self.rot_step_size,0,0))
-                    print("z-axis plus")
-            if abs(self.UpDPad) > self.threshold or abs(self.DownDPad) > self.threshold :
-                if self.DownDPad > 0:
+                    self.save_action((0, 0, 0, -self.rot_step_size, 0, 0))
+                    print("a_plus")
+
+            if abs(DPadY) > self.threshold:
+                if DPadY > 0:
                     self.b_minus()
-                    self.save_action((0,0,0,0,self.rot_step_size,0))
-                    print("z-axis plus")
-                if self.UpDPad > 0:
+                    self.save_action((0, 0, 0, 0, self.rot_step_size, 0))
+                    print("b_minus")
+                else:
                     self.b_plus()
-                    self.save_action((0,0,0,0,-self.rot_step_size,0))
-                    print("z-axis plus")
-            if abs(self.LeftTrigger-self.RightTrigger) > self.threshold:
-                if self.LeftTrigger > 0:
-                    self.a_minus()
-                    self.save_action((0,0,0,0,0,self.rot_step_size))
-                    print("z-axis plus")
-                if self.RightTrigger > 0:
-                    self.a_plus()
-                    self.save_action((0,0,0,0,0,-self.rot_step_size))
-                    print("z-axis plus")
-            if abs(self.X-self.SQUARE) > self.threshold:
-                if self.X > 0:
-                    self.gripper_open()
-                    self.save_action((0,0,0,0,0,0))
-                    print("z-axis plus")
-                if self.SQUARE > 0:
-                    self.gripper_close()
-                    self.save_action((0,0,0,0,0,0))
-                    print("z-axis plus")
-            # arm.set_position(300,100,200,180,0,0, wait=False
+                    self.save_action((0, 0, 0, 0, -self.rot_step_size, 0))
+                    print("b_plus")
+
+            if LeftTrigger > 0.5:
+                self.c_plus()
+                self.save_action((0, 0, 0, 0, 0, -self.rot_step_size))
+                print("c_plus")
+
+            if RightTrigger > 0.5:
+                self.c_minus()
+                self.save_action((0, 0, 0, 0, 0, self.rot_step_size))
+                print("c_minus")
+
+            if X:
+                self.gripper_open()
+                self.save_action((0, 0, 0, 0, 0, 0))
+                print("gripper_open")
+
+            if SQUARE:
+                self.gripper_close()
+                self.save_action((0, 0, 0, 0, 0, 0))
+                print("gripper_close")
+
+            pygame.time.wait(100)
 
 
 class VideoRecorder:
@@ -485,8 +514,6 @@ def parse_args():
     parser.add_argument("--fps", type=int, default=2)
     parser.add_argument("--frame_size", type=int, nargs=2, default=(512, 512))
     return parser.parse_args()
-
-
 
 # args = parse_args()
 save_path = "/workspace"
