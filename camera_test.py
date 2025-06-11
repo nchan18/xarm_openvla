@@ -1,7 +1,7 @@
 import cv2
 from PIL import Image
 
-cap = cv2.VideoCapture(6)  # 0 is the default webcam
+cap = cv2.VideoCapture(7)  # 0 is the default webcam
 while True:
     ret, frame = cap.read()
     if not ret:

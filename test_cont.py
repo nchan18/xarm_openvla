@@ -9,7 +9,7 @@ pygame.init()
 # It has nothing to do with the joysticks, just outputting the
 # information.
 
-class XboxController(object):
+class PlayStationController(object):
     MAX_TRIG_VAL = math.pow(2, 8)
     MAX_JOY_VAL = math.pow(2, 15)
 
@@ -39,15 +39,6 @@ class XboxController(object):
         self._monitor_thread = threading.Thread(target=self._monitor_controller, args=())
         self._monitor_thread.daemon = True
         self._monitor_thread.start()
-
-
-    def read(self): # return the buttons/triggers that you care about in this methode
-        x = self.LeftJoystickX
-        y = self.LeftJoystickY
-        a = self.A
-        b = self.X # b=1, x=2
-        rb = self.RightBumper
-        return [x, y, a, b, rb]
 
 
     def _monitor_controller(self):
@@ -99,28 +90,6 @@ class XboxController(object):
 
 
 
-class TextPrint:
-    def __init__(self):
-        self.reset()
-        self.font = pygame.font.Font(None, 25)
-
-    def tprint(self, screen, text):
-        text_bitmap = self.font.render(text, True, (0, 0, 0))
-        screen.blit(text_bitmap, (self.x, self.y))
-        self.y += self.line_height
-
-    def reset(self):
-        self.x = 10
-        self.y = 10
-        self.line_height = 15
-
-    def indent(self):
-        self.x += 10
-
-    def unindent(self):
-        self.x -= 10
-
-
 def main():
     step_size = 25 # mm
     step_size_rot = 5 #degrees
@@ -155,7 +124,7 @@ def main():
     arm.set_gripper_position(850, wait=True)
 
     
-    joy = XboxController()
+    joy = PlayStationController()
     while True:
         if abs(joy.LeftJoystickY) > threshold:
             current_pos[0]+= joy.LeftJoystickY * step_size *-1
