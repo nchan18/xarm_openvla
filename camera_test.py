@@ -1,7 +1,14 @@
 import cv2
 from PIL import Image
 
-cap = cv2.VideoCapture(7)  # 0 is the default webcam
+for i in range(8):
+    try:
+        cap = cv2.VideoCapture(i)  # 0 is the default webcam
+        ret, frame = cap.read()
+        if ret:
+            print(i)
+    except Exception as e:
+        continue
 while True:
     ret, frame = cap.read()
     if not ret:

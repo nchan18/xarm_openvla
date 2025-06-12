@@ -400,78 +400,91 @@ class PlayStationController(xArm7GripperEnv):
             X = joystick.get_button(0)
             SQUARE = joystick.get_button(3)
             DPadX, DPadY = joystick.get_hat(0)
+            action = [0,0,0,0,0,0]
 
             if abs(LeftJoystickY) > self.threshold:
                 if LeftJoystickY > 0:
                     self.x_minus()
-                    self.save_action((-self.pos_step_size, 0, 0, 0, 0, 0))
+                    # self.save_action((-self.pos_step_size, 0, 0, 0, 0, 0))
+                    action[0] = -self.pos_step_size
                     print("x_minus")
                 else:
                     self.x_plus()
-                    self.save_action((self.pos_step_size, 0, 0, 0, 0, 0))
+                    # self.save_action((self.pos_step_size, 0, 0, 0, 0, 0))
+                    action[0] = self.pos_step_size
                     print("x_plus")
 
             if abs(LeftJoystickX) > self.threshold:
                 if LeftJoystickX > 0:
                     self.y_minus()
-                    self.save_action((0, -self.pos_step_size, 0, 0, 0, 0))
+                    # self.save_action((0, -self.pos_step_size, 0, 0, 0, 0))
+                    action[1] = -self.pos_step_size
                     print("y_minus")
                 else:
                     self.y_plus()
-                    self.save_action((0, self.pos_step_size, 0, 0, 0, 0))
+                    action[1] = self.pos_step_size
+                    # self.save_action((0, self.pos_step_size, 0, 0, 0, 0))
                     print("y_plus")
 
             if abs(RightJoystickY) > self.threshold:
                 if RightJoystickY > 0:
                     self.z_minus()
-                    self.save_action((0, 0, -self.pos_step_size, 0, 0, 0))
+                    action[2] = -self.pos_step_size
+                    # self.save_action((0, 0, -self.pos_step_size, 0, 0, 0))
                     print("z_minus")
                 else:
                     self.z_plus()
-                    self.save_action((0, 0, self.pos_step_size, 0, 0, 0))
+                    action[2] = self.pos_step_size
+                    # self.save_action((0, 0, self.pos_step_size, 0, 0, 0))
                     print("z_plus")
 
             if abs(DPadX) > self.threshold:
                 if DPadX > 0:
                     self.a_minus()
-                    self.save_action((0, 0, 0, self.rot_step_size, 0, 0))
+                    action[3] = -self.pos_step_size
+                    # self.save_action((0, 0, 0, self.rot_step_size, 0, 0))
                     print("a_minus")
                 else:
                     self.a_plus()
-                    self.save_action((0, 0, 0, -self.rot_step_size, 0, 0))
+                    action[3] = self.pos_step_size
+                    # self.save_action((0, 0, 0, -self.rot_step_size, 0, 0))
                     print("a_plus")
 
             if abs(DPadY) > self.threshold:
                 if DPadY > 0:
                     self.b_minus()
-                    self.save_action((0, 0, 0, 0, self.rot_step_size, 0))
+                    action[4] = -self.pos_step_size
+                    # self.save_action((0, 0, 0, 0, self.rot_step_size, 0))
                     print("b_minus")
                 else:
                     self.b_plus()
-                    self.save_action((0, 0, 0, 0, -self.rot_step_size, 0))
+                    action[4] = self.pos_step_size
+                    # self.save_action((0, 0, 0, 0, -self.rot_step_size, 0))
                     print("b_plus")
 
             if LeftTrigger > 0.5:
                 self.c_plus()
-                self.save_action((0, 0, 0, 0, 0, -self.rot_step_size))
+                action[5] = self.pos_step_size
+                # self.save_action((0, 0, 0, 0, 0, -self.rot_step_size))
                 print("c_plus")
 
             if RightTrigger > 0.5:
                 self.c_minus()
-                self.save_action((0, 0, 0, 0, 0, self.rot_step_size))
+                action[5] = -self.pos_step_size
+                # self.save_action((0, 0, 0, 0, 0, self.rot_step_size))
                 print("c_minus")
 
             if X:
                 self.gripper_open()
-                self.save_action((0, 0, 0, 0, 0, 0))
+                # self.save_action((0, 0, 0, 0, 0, 0))
                 print("gripper_open")
 
             if SQUARE:
                 self.gripper_close()
-                self.save_action((0, 0, 0, 0, 0, 0))
+                # self.save_action((0, 0, 0, 0, 0, 0))
                 print("gripper_close")
-
-            pygame.time.wait(100)
+            self.save_action(tuple(action))
+            pygame.time.wait(500)
 
 
 class VideoRecorder:
@@ -526,7 +539,7 @@ contorller_args = {
     "grip_size": 100,
     "save_actions": f"{save_path}/actions",
     "save_video": f"{save_path}/videos",
-    "webcam": 7,
+    "webcam": 3,
     "flip_view": False,
 }
 arm = PlayStationController(**contorller_args)
