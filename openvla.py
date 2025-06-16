@@ -10,7 +10,7 @@ from xarm.wrapper import XArmAPI
 import math
 import time
 import threading
-cap = cv2.VideoCapture(6)
+cap = cv2.VideoCapture(3)
 cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
 current_pos = [300,0,300]
@@ -42,7 +42,7 @@ code = arm.set_gripper_enable(True)
 code = arm.set_gripper_speed(5000)
 arm.set_gripper_position(850, wait=True)
 
-prompt = "pickup the yellow cube"
+prompt = "pickup the blue cube"
 
 # Load Processor & VLA
 processor = AutoProcessor.from_pretrained("openvla/openvla-7b", trust_remote_code=True)
