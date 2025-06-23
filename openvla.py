@@ -10,7 +10,7 @@ from xarm.wrapper import XArmAPI
 import math
 import time
 import threading
-cap = cv2.VideoCapture(3)
+cap = cv2.VideoCapture(0)
 cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
 current_pos = [300,0,300]

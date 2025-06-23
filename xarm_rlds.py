@@ -4,12 +4,13 @@ import pygame
 import math
 import threading
 import cv2
+import time, os
 # from evdev import InputDevice, categorize, ecodes
 from xarm.wrapper import XArmAPI
 
 
 class xArm7GripperEnv:
-    def __init__(self, robot_ip="192.168.1.198", arm_speed=1000, gripper_speed=1000, pos_step_size=25, rot_step_size=5, grip_size=100):
+    def __init__(self, robot_ip="192.168.1.198", arm_speed=1000, gripper_speed=1000, pos_step_size=50, rot_step_size=5, grip_size=100):
         self.robot_ip = robot_ip
         self.arm_speed = arm_speed
         self.gripper_speed = gripper_speed
@@ -19,11 +20,11 @@ class xArm7GripperEnv:
         self.arm_pos: tuple = None
         self.arm_rot: tuple = None
         self.gripper_pos: int = None
-        self.gripper_pos_counter: int = 0
         self.wait = False
         self.save_video = False
         self.arm = XArmAPI(self.robot_ip)
-        self.arm.set_mode(0)
+        self.arm_starting_pose = (300, 0, 300, 180, 0, 0)
+        self.arm.set_mode(0) # set_position
         self.arm.set_state(0)
         code = self.arm.set_gripper_mode(0)
         print("set gripper mode: location mode, code={}".format(code))
@@ -31,6 +32,11 @@ class xArm7GripperEnv:
         print("set gripper enable, code={}".format(code))
         code = self.arm.set_gripper_speed(self.gripper_speed)
         print("set gripper speed, code={}".format(code))
+        self.move_position(self.arm_starting_pose)
+        self.arm.set_mode(5) # set catesian velocity
+        self.arm.set_state(0)
+
+
         self.update_arm_state()
 
     def update_arm_state(self):
@@ -39,81 +45,25 @@ class xArm7GripperEnv:
         self.arm_rot = tuple(arm_pos[3:])
         _, gripper_pos = self.arm.get_gripper_position()
         self.gripper_pos = gripper_pos
-        self.gripper_pos_counter = gripper_pos
 
-    # def __enter__(self):
-    #     self.arm = XArmAPI(self.robot_ip)
-    #     self.arm.motion_enable(True)
-    #     self.arm.set_mode(0)
-    #     self.arm.set_state(0)
-    #     code = arm.set_gripper_mode(0)
-    #     print("set gripper mode: location mode, code={}".format(code))
-    #     code = arm.set_gripper_enable(True)
-    #     print("set gripper enable, code={}".format(code))
-    #     code = arm.set_gripper_speed(self.gripper_speed)
-    #     print("set gripper speed, code={}".format(code))
-    #     self.arm = arm
-    #     self.update_arm_state()
-    #     print("Initilized")
-    #     return self
-
-    # def __exit__(self, *arg, **kwargs):
-    #     self.arm.disconnect()
-    #     print("Disconnected")
-
-    #     if self.save_video:
-    #         self.video_recorder.close()
-
-    def x_plus(self):
-        self.arm.set_position(x=self.pos_step_size, relative=True, wait=self.wait, speed=self.arm_speed)
-
-    def x_minus(self):
-        self.arm.set_position(x=-self.pos_step_size, relative=True, wait=self.wait, speed=self.arm_speed)
-
-    def y_plus(self):
-        self.arm.set_position(y=self.pos_step_size, relative=True, wait=self.wait, speed=self.arm_speed)
-
-    def y_minus(self):
-        self.arm.set_position(y=-self.pos_step_size, relative=True, wait=self.wait, speed=self.arm_speed)
-
-    def z_plus(self):
-        self.arm.set_position(z=self.pos_step_size, relative=True, wait=self.wait, speed=self.arm_speed)
-
-    def z_minus(self):
-        self.arm.set_position(z=-self.pos_step_size, relative=True, wait=self.wait, speed=self.arm_speed)
-
-    def a_plus(self):
-        self.arm.set_position(roll=self.rot_step_size, relative=True, wait=self.wait, speed=self.arm_speed)
-    
-    def a_minus(self):
-        self.arm.set_position(roll=-self.rot_step_size, relative=True, wait=self.wait, speed=self.arm_speed)
-
-    def b_plus(self):
-        self.arm.set_position(pitch=self.rot_step_size, relative=True, wait=self.wait, speed=self.arm_speed)
-
-    def b_minus(self):
-        self.arm.set_position(pitch=-self.rot_step_size, relative=True, wait=self.wait, speed=self.arm_speed)
-
-    def c_plus(self):
-        self.arm.set_position(yaw=self.rot_step_size, relative=True, wait=self.wait, speed=self.arm_speed)
-    
-    def c_minus(self):
-        self.arm.set_position(yaw=-self.rot_step_size, relative=True, wait=self.wait, speed=self.arm_speed)
+    def move_position(self,action):
+        self.arm.set_position(x=action[0],y=action[1],z=action[2],roll=action[3],pitch=action[4],yaw=action[5], relative=False, wait=True, speed=100)
 
     def move(self,action):
-        self.arm.set_position(x=action[0],y=action[1],z=action[2],roll=action[3],pitch=action[4],yaw=action[5], relative=True, wait=True, speed=self.arm_speed)
+        if not action == [0,0,0,0,0,0]:
+            print(action)
+
+        self.arm.vc_set_cartesian_velocity(action)
+        # wait = True
+        # self.arm.set_position(x=action[0],y=action[1],z=action[2],roll=action[3],pitch=action[4],yaw=action[5], relative=True, wait=wait, speed=self.arm_speed)
 
     def gripper_open(self):
-        k = self.gripper_pos_counter
         delta = self.grip_size
-        self.arm.set_gripper_position(min(k + delta, 1000), wait=self.wait)
-        self.gripper_pos_counter = min(self.gripper_pos_counter + delta, 1000)
+        self.arm.set_gripper_position(850, wait=self.wait)
 
     def gripper_close(self):
-        k = self.gripper_pos_counter
         delta = self.grip_size
-        self.arm.set_gripper_position(max(k - delta, 0), wait=self.wait)
-        self.gripper_pos_counter = max(self.gripper_pos_counter - delta, 0)
+        self.arm.set_gripper_position(0, wait=self.wait)
 
     def clean_errors(self):
         self.arm.clean_error()
@@ -155,7 +105,7 @@ class PlayStationController(xArm7GripperEnv):
         self.save_video = len(save_video) > 0
         self.webcam = webcam
         self.flip_view = flip_view
-        self.video_recorder = VideoRecorder(save_video, webcam=webcam, fps=5) if self.save_video else None
+        self.video_recorder = VideoRecorder(save_video, webcam=webcam, fps=5.0) if self.save_video else None
         self.LeftJoystickY = 0.0
         self.LeftJoystickX = 0.0
         self.RightJoystickY = 0.0
@@ -177,12 +127,10 @@ class PlayStationController(xArm7GripperEnv):
         self.UpDPad = 0.0
         self.DownDPad = 0.0
         self.threshold = 0.2
-        self.position_step_size = 5
-        self.rotation_step_size = 20
 
         #self._monitor_thread = threading.Thread(target=self._monitor_controller, args=())
         #self._monitor_thread.daemon = True
-        self.lock = threading.Lock()
+        # self.lock = threading.Lock()
         #self._monitor_thread.start()
 
     def setup_action_save(self):
@@ -194,10 +142,15 @@ class PlayStationController(xArm7GripperEnv):
         self.update_arm_state()
         rel_pos = rel_action[0:3]
         rel_rot = rel_action[3:5]
+        arm_pos_meters = [i / 1000 for i in self.arm_pos]
+        arm_rot_rad = [i * math.pi/180.0 for i in self.arm_rot]
+        gripper_pos_norm = self.gripper_pos/850.0
+        rel_pos_meters = [i / 1000 for i in self.arm_pos]
+        rel_rot_rad = [i * math.pi/180.0 for i in rel_rot]
         with open(self.action_save_path, "a") as f:
-            f.write(f"{self.arm_pos}, {self.arm_rot}, {self.gripper_pos}, {rel_pos}, {rel_rot}\n")
+            f.write(f"{arm_pos_meters}, {arm_rot_rad}, {gripper_pos_norm}, {rel_pos_meters}, {rel_rot_rad}\n")
         if self.save_video:
-            self.video_recorder.record_frame()
+            self.video_recorder.record_frame(action=arm_pos_meters) # for writing action on frame - Dominick
 
     def reset_save_file(self):
         save_path = datetime.datetime.now().strftime(f"{self.save_root}/actions_%Y-%m-%d_%H-%M-%S") + ".csv"
@@ -206,173 +159,90 @@ class PlayStationController(xArm7GripperEnv):
         if self.save_video:
             self.video_recorder.reset()
             
-    # def _monitor_controller(self):
-    #     joy=None
-
-    #     while True:
-    #         for event in pygame.event.get():
-    #             joysticks = {}
-    #             # Handle hotplugging
-    #             if event.type == pygame.JOYDEVICEADDED:
-    #                 # This event will be generated when the program starts for every
-    #                 # joystick, filling up the list without needing to create them manually.
-    #                 joy = pygame.joystick.Joystick(event.device_index)
-    #                 joysticks[joy.get_instance_id()] = joy100
-    #                 del joysticks[event.instance_id]
-    #                 print("joystick deleted")
-
-    #             # self.X = int(joy.get_button(0))
-    #             if joy != None:
-    #                 with self.lock:
-    #                 # print("There is hope")
-    #                     self.SQUARE = int(joy.get_button(3))
-    #                     self.TRIANGLE = int(joy.get_button(2))
-    #                     self.O = int(joy.get_button(1))
-    #                     self.LeftBumper = int(joy.get_button(4))
-    #                     self.RightBumper = int(joy.get_button(5))
-    #                     self.LeftJoystickX = joy.get_axis(0)
-    #                     self.LeftJoystickY = joy.get_axis(1)
-    #                     self.RightJoystickX = joy.get_axis(3)
-    #                     self.RightJoystickY = joy.get_axis(4)
-    #                     self.LeftTrigger = joy.get_axis(2)
-    #                     self.RightTrigger = joy.get_axis(5)
-    #                     # print(self.LeftJoystickY)
-
-    #                     dpad = joy.get_hat(0)
-    #                     if dpad [0] == -1 :
-    #                         self.LeftDPad = 1
-    #                         self.RightDPad = 0
-    #                     elif dpad [0] == 1 :
-    #                         self.LeftDPad = 0
-    #                         self.RightDPad = 1
-    #                     else :
-    #                         self.LeftDPad = 0
-    #                         self.RightDPad = 0
-
-    #                     if dpad [1] == -1 :
-    #                         self.UpDPad = 1
-    #                         self.DownDPad = 0
-    #                     elif dpad [1] == 1 :
-    #                         self.UpDPad = 0
-    #                         self.DownDPad = 1
-    #                     else :
-    #                         self.UpDPad = 0
-    #                         self.DownDPad = 0
-    #                 # print("completed")
-    #                 # print(joy==None)
-    #             # else:
-    #                 # print("We are screwed")
-
     def controller_listen(self):
         joystick = self.joystick
-        while True:
-            pygame.event.pump()
+        # while True:
+        pygame.event.pump()
 
-            # Read joystick inputs
-            LeftJoystickY = joystick.get_axis(1)
-            LeftJoystickX = joystick.get_axis(0)
-            RightJoystickY = joystick.get_axis(4)
-            #RightJoystickX = joystick.get_axis(3)
-            LeftTrigger = joystick.get_axis(2)
-            RightTrigger = joystick.get_axis(5)
-            X = joystick.get_button(0)
-            SQUARE = joystick.get_button(3)
-            DPadX, DPadY = joystick.get_hat(0)
-            action = [0,0,0,0,0,0]
+        # Read joystick inputs
+        LeftJoystickY = joystick.get_axis(1)
+        LeftJoystickX = joystick.get_axis(0)
+        RightJoystickY = joystick.get_axis(4)
+        LeftTrigger = joystick.get_axis(2)
+        RightTrigger = joystick.get_axis(5)
+        X = joystick.get_button(0)
+        SQUARE = joystick.get_button(3)
+        DPadX, DPadY = joystick.get_hat(0)
+        action = [0,0,0,0,0,0]
 
-            if abs(LeftJoystickY) > self.threshold:
-                if LeftJoystickY > 0:
-                    # self.x_minus()
-                    # self.save_action((-self.pos_step_size, 0, 0, 0, 0, 0))
-                    action[0] = -self.pos_step_size
-                    print("x_minus")
-                else:
-                    self.x_plus()
-                    # self.save_action((self.pos_step_size, 0, 0, 0, 0, 0))
-                    action[0] = self.pos_step_size
-                    print("x_plus")
+        if abs(LeftJoystickY) > self.threshold:
+            if LeftJoystickY > 0:
+                action[0] = -self.pos_step_size
+                print("x_minus")
+            else:
+                action[0] = self.pos_step_size
+                print("x_plus")
 
-            if abs(LeftJoystickX) > self.threshold:
-                if LeftJoystickX > 0:
-                    # self.y_minus()
-                    # self.save_action((0, -self.pos_step_size, 0, 0, 0, 0))
-                    action[1] = -self.pos_step_size
-                    print("y_minus")
-                else:
-                    # self.y_plus()
-                    action[1] = self.pos_step_size
-                    # self.save_action((0, self.pos_step_size, 0, 0, 0, 0))
-                    print("y_plus")
+        if abs(LeftJoystickX) > self.threshold:
+            if LeftJoystickX > 0:
+                action[1] = -self.pos_step_size
+                print("y_minus")
+            else:
+                action[1] = self.pos_step_size
+                print("y_plus")
 
-            if abs(RightJoystickY) > self.threshold:
-                if RightJoystickY > 0:
-                    # self.z_minus()
-                    action[2] = -self.pos_step_size
-                    # self.save_action((0, 0, -self.pos_step_size, 0, 0, 0))
-                    print("z_minus")
-                else:
-                    # self.z_plus()
-                    action[2] = self.pos_step_size
-                    # self.save_action((0, 0, self.pos_step_size, 0, 0, 0))
-                    print("z_plus")
+        if abs(RightJoystickY) > self.threshold:
+            if RightJoystickY > 0:
+                action[2] = -self.pos_step_size
+                print("z_minus")
+            else:
+                action[2] = self.pos_step_size
+                print("z_plus")
 
-            if abs(DPadX) > self.threshold:
-                if DPadX > 0:
-                    # self.a_minus()
-                    action[3] = -self.pos_step_size
-                    # self.save_action((0, 0, 0, self.rot_step_size, 0, 0))
-                    print("a_minus")
-                else:
-                    # self.a_plus()
-                    action[3] = self.pos_step_size
-                    # self.save_action((0, 0, 0, -self.rot_step_size, 0, 0))
-                    print("a_plus")
+        if abs(DPadX) > self.threshold:
+            if DPadX > 0:
+                action[3] = -self.pos_step_size
+                print("a_minus")
+            else:
+                action[3] = self.pos_step_size
+                print("a_plus")
 
-            if abs(DPadY) > self.threshold:
-                if DPadY > 0:
-                    # self.b_minus()
-                    action[4] = -self.pos_step_size
-                    # self.save_action((0, 0, 0, 0, self.rot_step_size, 0))
-                    print("b_minus")
-                else:
-                    # self.b_plus()
-                    action[4] = self.pos_step_size
-                    # self.save_action((0, 0, 0, 0, -self.rot_step_size, 0))
-                    print("b_plus")
+        if abs(DPadY) > self.threshold:
+            if DPadY > 0:
+                action[4] = -self.pos_step_size
+                print("b_minus")
+            else:
+                action[4] = self.pos_step_size
+                print("b_plus")
 
-            if LeftTrigger > 0.5:
-                # self.c_plus()
-                action[5] = self.pos_step_size
-                # self.save_action((0, 0, 0, 0, 0, -self.rot_step_size))
-                print("c_plus")
+        if LeftTrigger > 0.5:
+            action[5] = self.pos_step_size
+            print("c_plus")
 
-            if RightTrigger > 0.5:
-                # self.c_minus()
-                action[5] = -self.pos_step_size
-                # self.save_action((0, 0, 0, 0, 0, self.rot_step_size))
-                print("c_minus")
+        if RightTrigger > 0.5:
+            action[5] = -self.pos_step_size
+            print("c_minus")
 
-            if X:
-                self.gripper_open()
-                # self.save_action((0, 0, 0, 0, 0, 0))
-                print("gripper_open")
+        if X:
+            self.gripper_open()
+            print("gripper_open")
 
-            if SQUARE:
-                self.gripper_close()
-                # self.save_action((0, 0, 0, 0, 0, 0))
-                print("gripper_close")
-            self.move(action)
-            self.save_action(tuple(action))
-            # pygame.time.wait(100)
+        if SQUARE:
+            self.gripper_close()
+            print("gripper_close")
+
+        self.move(action)
+        self.save_action(tuple(action))
 
 
 class VideoRecorder:
-    def __init__(self, video_dir, frame_size=(1280,800), fps=3.0, webcam=0):
+    def __init__(self, video_dir, frame_size=(1280,800), fps=3.0, webcam=0, idle_frames=50):
         self.dir = video_dir
         self.video_path = datetime.datetime.now().strftime(f"{video_dir}/video_%Y-%m-%d_%H-%M-%S.mp4")
         self.frame_size = frame_size
         self.fps = fps
         self.webcam = webcam
+        self.idle_frames = idle_frames
         self.setup()
 
     def setup(self):
@@ -381,13 +251,24 @@ class VideoRecorder:
         self.cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 3)
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.frame_size[0])
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.frame_size[1])
+
+        # for i in range(self.idle_frames): # give some time for the camera to adjust to lighting
+        #     ret, frame = self.cap.read()
+        print('ready')
+
         self.writer = cv2.VideoWriter(self.video_path, cv2.VideoWriter_fourcc(*"mp4v"), self.fps, self.frame_size)
 
-    def record_frame(self):
+    def record_frame(self, action=None):
         ret, frame = self.cap.read()
+
         if ret:
             frame = cv2.resize(frame, self.frame_size)
+            frame = cv2.putText(frame, str(action), (5,200), cv2.FONT_HERSHEY_DUPLEX, 1, (255,255,255), 1)
             self.writer.write(frame)
+
+            # Below is hardcoded for frame writing
+            # im_num = len(os.listdir('/home/nchandr8/Desktop/temp_images/'))
+            # cv2.imwrite(f'/home/nchandr8/Desktop/temp_images/{im_num}.jpg', frame)
         else:
             print("Warning: Failed to capture frame")
 
@@ -414,19 +295,25 @@ contorller_args = {
     "robot_ip": "192.168.1.198",
     "arm_speed": 1000,
     "gripper_speed": 10000,
-    "pos_step_size": 25,
+    "pos_step_size": 50,
     "rot_step_size": 5,
     "grip_size": 1000,
     "save_actions": f"{save_path}/actions",
     "save_video": f"{save_path}/videos",
-    "webcam": 7,
+    "webcam": 4 ,
     "flip_view": False,
 }
 arm = PlayStationController(**contorller_args)
+
+time_after_loop = time.process_time() # initalisation
+frequency = 1/15.0
 while True:
-    try:
-        arm.controller_listen()
-    except KeyboardInterrupt:
-        break
-    except Exception as e:
-        print(e)
+    time_before_loop = time.process_time()
+    if time_before_loop - time_after_loop >= frequency:
+        try:
+            arm.controller_listen()
+        except KeyboardInterrupt:
+            break
+        except Exception as e:
+            print(e)
+        time_after_loop = time.process_time()
