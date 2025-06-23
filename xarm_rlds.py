@@ -7,15 +7,18 @@ import cv2
 import time, os
 # from evdev import InputDevice, categorize, ecodes
 from xarm.wrapper import XArmAPI
+import h5py
+import numpy as np
 
 
 class xArm7GripperEnv:
-    def __init__(self, robot_ip="192.168.1.198", arm_speed=1000, gripper_speed=1000, pos_step_size=50, rot_step_size=5, grip_size=100):
+    def __init__(self, robot_ip="192.168.1.198", arm_speed=1000, gripper_speed=1000, pos_step_size=50, rot_step_size=5, grip_size=100,task_name=" "):
         self.robot_ip = robot_ip
         self.arm_speed = arm_speed
         self.gripper_speed = gripper_speed
         self.pos_step_size = pos_step_size
         self.rot_step_size = rot_step_size
+        self.task_name = task_name
         self.grip_size = grip_size
         self.arm_pos: tuple = None
         self.arm_rot: tuple = None
@@ -81,8 +84,8 @@ class PlayStationController(xArm7GripperEnv):
         self,
         *args,
         #input_device="/dev/input/event15",
-        save_actions="",
-        save_video="",
+        save_path="",
+        task_name="",
         webcam=0,
         flip_view=True,
         **kwargs,
@@ -96,16 +99,20 @@ class PlayStationController(xArm7GripperEnv):
         self.joystick = pygame.joystick.Joystick(0)
         self.joystick.init()
 
-        self.save_actions = len(save_actions) > 0
-        self.save_root = save_actions
-        save_path = datetime.datetime.now().strftime(f"{self.save_root}/actions_%Y-%m-%d_%H-%M-%S") + ".csv"
-        self.action_save_path = save_path
-        if self.save_actions:
-            self.setup_action_save()
-        self.save_video = len(save_video) > 0
+        #save_path = datetime.datetime.now().strftime(f"{self.save_root}/actions_%Y-%m-%d_%H-%M-%S") + ".csv"
+        self.task_name = task_name.replace(" ", "_")
+        trajectory_num = 0
+        os.makedirs(os.path.join(save_path, self.task_name), exist_ok=True)
+        while os.path.isdir(os.path.join(save_path, self.task_name, f"trajectory{trajectory_num}")):
+            trajectory_num += 1
+        self.save_actions = os.path.join(save_path, self.task_name, f"trajectory{trajectory_num}", "action")
+        self.save_video = os.path.join(save_path, self.task_name, f"trajectory{trajectory_num}", "video")
+        os.makedirs(self.save_actions, exist_ok=True)
+        os.makedirs(self.save_video, exist_ok=True)
         self.webcam = webcam
         self.flip_view = flip_view
-        self.video_recorder = VideoRecorder(save_video, webcam=webcam, fps=5.0) if self.save_video else None
+        if self.save_action:
+            self.setup_action_save()
         self.LeftJoystickY = 0.0
         self.LeftJoystickX = 0.0
         self.RightJoystickY = 0.0
@@ -133,28 +140,72 @@ class PlayStationController(xArm7GripperEnv):
         # self.lock = threading.Lock()
         #self._monitor_thread.start()
 
+    # def setup_action_save(self):
+    #     with open(self.action_save_path, "w") as f:
+    #         f.write("abs_pos, abs_rot, gripper, rel_pos, rel_rot\n")
+    #     print(f"Saving actions to {self.action_save_path}")
+
+    # def save_action(self, rel_action):
+    #     self.update_arm_state()
+    #     rel_pos = rel_action[0:3]
+    #     rel_rot = rel_action[3:5]
+    #     arm_pos_meters = [i / 1000 for i in self.arm_pos]
+    #     arm_rot_rad = [i * math.pi/180.0 for i in self.arm_rot]
+    #     gripper_pos_norm = self.gripper_pos/850.0
+    #     rel_pos_meters = [i / 1000 for i in self.arm_pos]
+    #     rel_rot_rad = [i * math.pi/180.0 for i in rel_rot]
+    #     with open(self.action_save_path, "a") as f:
+    #         f.write(f"{arm_pos_meters}, {arm_rot_rad}, {gripper_pos_norm}, {rel_pos_meters}, {rel_rot_rad}\n")
+    #     if self.save_video:
+    #         self.video_recorder.record_frame(action=arm_pos_meters) # for writing action on frame - Dominick
+
+    # def reset_save_file(self):
+    #     save_path = datetime.datetime.now().strftime(f"{self.save_root}/actions_%Y-%m-%d_%H-%M-%S") + ".csv"
+    #     self.action_save_path = save_path
+    #     self.setup_action_save()
+    #     if self.save_video:
+    #         self.video_recorder.reset()
+
     def setup_action_save(self):
-        with open(self.action_save_path, "w") as f:
-            f.write("abs_pos, abs_rot, gripper, rel_pos, rel_rot\n")
-        print(f"Saving actions to {self.action_save_path}")
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        self.hdf5_path = os.path.join(self.save_actions, f"actions_{timestamp}.hdf5")
+        self.hdf5_file = h5py.File(self.hdf5_path, "w")
+        self.action_idx = 0
+
+        self.hdf5_file.create_dataset("abs_pos", shape=(0, 3), maxshape=(None, 3), dtype="f")
+        self.hdf5_file.create_dataset("abs_rot", shape=(0, 3), maxshape=(None, 3), dtype="f")
+        self.hdf5_file.create_dataset("gripper", shape=(0,), maxshape=(None,), dtype="f")
+        self.hdf5_file.create_dataset("rel_action", shape=(0, 6), maxshape=(None, 6), dtype="f")
+        self.hdf5_file.create_dataset("image_path", shape=(0,), maxshape=(None,), dtype=h5py.string_dtype(encoding='utf-8'))
+
+        if self.save_video:
+            self.video_recorder = VideoRecorder(self.save_video, webcam=self.webcam, frame_size=(1280, 800))
+
 
     def save_action(self, rel_action):
         self.update_arm_state()
-        rel_pos = rel_action[0:3]
-        rel_rot = rel_action[3:5]
-        arm_pos_meters = [i / 1000 for i in self.arm_pos]
-        arm_rot_rad = [i * math.pi/180.0 for i in self.arm_rot]
-        gripper_pos_norm = self.gripper_pos/850.0
-        rel_pos_meters = [i / 1000 for i in self.arm_pos]
-        rel_rot_rad = [i * math.pi/180.0 for i in rel_rot]
-        with open(self.action_save_path, "a") as f:
-            f.write(f"{arm_pos_meters}, {arm_rot_rad}, {gripper_pos_norm}, {rel_pos_meters}, {rel_rot_rad}\n")
+        abs_pos = np.array([i / 1000 for i in self.arm_pos], dtype=np.float32)
+        abs_rot = np.array([i * math.pi / 180 for i in self.arm_rot], dtype=np.float32)
+        gripper = np.array(self.gripper_pos / 850.0, dtype=np.float32)
+        rel_action = np.array(rel_action, dtype=np.float32)
+
+        for key, data in zip(["abs_pos", "abs_rot", "gripper", "rel_action"], [abs_pos, abs_rot, gripper, rel_action]):
+            dset = self.hdf5_file[key]
+            new_shape = (self.action_idx + 1,) + dset.shape[1:]
+            dset.resize(new_shape)
+            dset[self.action_idx] = data
+
+        # Save frame and path
         if self.save_video:
-            self.video_recorder.record_frame(action=arm_pos_meters) # for writing action on frame - Dominick
+            self.video_recorder.record_frame(self.action_idx)
+            image_path_dset = self.hdf5_file["image_path"]
+            image_path_dset.resize(self.action_idx + 1, axis=0)
+            image_path_dset[self.action_idx] = self.video_recorder.image_paths[-1]
+
+        self.action_idx += 1    
 
     def reset_save_file(self):
-        save_path = datetime.datetime.now().strftime(f"{self.save_root}/actions_%Y-%m-%d_%H-%M-%S") + ".csv"
-        self.action_save_path = save_path
+        self.hdf5_file.close()
         self.setup_action_save()
         if self.save_video:
             self.video_recorder.reset()
@@ -234,52 +285,44 @@ class PlayStationController(xArm7GripperEnv):
         self.move(action)
         self.save_action(tuple(action))
 
-
 class VideoRecorder:
-    def __init__(self, video_dir, frame_size=(1280,800), fps=3.0, webcam=0, idle_frames=50):
-        self.dir = video_dir
-        self.video_path = datetime.datetime.now().strftime(f"{video_dir}/video_%Y-%m-%d_%H-%M-%S.mp4")
-        self.frame_size = frame_size
-        self.fps = fps
-        self.webcam = webcam
-        self.idle_frames = idle_frames
-        self.setup()
-
-    def setup(self):
-        self.cap = cv2.VideoCapture(self.webcam)
+    def __init__(self, image_dir, frame_size=(1280, 800), webcam=0):
+        self.cap = cv2.VideoCapture(webcam)
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, frame_size[0])
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, frame_size[1])
         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        self.cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 3)
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.frame_size[0])
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.frame_size[1])
 
-        # for i in range(self.idle_frames): # give some time for the camera to adjust to lighting
-        #     ret, frame = self.cap.read()
-        print('ready')
+        self.frame_size = frame_size
+        self.time_stamp = time.strftime("%Y%m%d-%H%M%S")
+        print(self.time_stamp)
+        self.image_dir = image_dir
+        os.makedirs(self.image_dir, exist_ok=True)
+        self.frame_idx = 0
 
-        self.writer = cv2.VideoWriter(self.video_path, cv2.VideoWriter_fourcc(*"mp4v"), self.fps, self.frame_size)
+        # Store image paths
+        self.image_paths = []
 
-    def record_frame(self, action=None):
+    def record_frame(self, action_idx=None):
         ret, frame = self.cap.read()
-
         if ret:
             frame = cv2.resize(frame, self.frame_size)
-            frame = cv2.putText(frame, str(action), (5,200), cv2.FONT_HERSHEY_DUPLEX, 1, (255,255,255), 1)
-            self.writer.write(frame)
+            filename = f"frame_{self.frame_idx:05d}.jpg"
+            filepath = os.path.join(self.image_dir,filename)
+            print(filepath)
 
-            # Below is hardcoded for frame writing
-            # im_num = len(os.listdir('/home/nchandr8/Desktop/temp_images/'))
-            # cv2.imwrite(f'/home/nchandr8/Desktop/temp_images/{im_num}.jpg', frame)
+            # Optionally draw info
+            if action_idx is not None:
+                frame = cv2.putText(frame, str(action_idx), (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255), 2)
+
+            # Save image
+            cv2.imwrite(filepath, frame)
+            self.image_paths.append(filepath)
+            self.frame_idx += 1
         else:
             print("Warning: Failed to capture frame")
 
-    def reset(self):
-        self.close()
-        self.video_path = datetime.datetime.now().strftime(f"{self.dir}/video_%Y-%m-%d_%H-%M-%S.mp4")
-        self.setup()
-
     def close(self):
         self.cap.release()
-        self.writer.release()
 
 
 def parse_args():
@@ -293,27 +336,32 @@ def parse_args():
 save_path = "/workspace/xarm-dataset"
 contorller_args = {
     "robot_ip": "192.168.1.198",
+    "save_path": "/workspace/xarm-dataset",
     "arm_speed": 1000,
     "gripper_speed": 10000,
     "pos_step_size": 50,
     "rot_step_size": 5,
     "grip_size": 1000,
-    "save_actions": f"{save_path}/actions",
-    "save_video": f"{save_path}/videos",
     "webcam": 4 ,
     "flip_view": False,
+    "task_name": "place the blue box on plate"
 }
 arm = PlayStationController(**contorller_args)
 
-time_after_loop = time.process_time() # initalisation
-frequency = 1/15.0
-while True:
-    time_before_loop = time.process_time()
-    if time_before_loop - time_after_loop >= frequency:
-        try:
+try:
+    time_after_loop = time.process_time()
+    frequency = 1/15.0
+    while True:
+        time_before_loop = time.process_time()
+        if time_before_loop - time_after_loop >= frequency:
             arm.controller_listen()
-        except KeyboardInterrupt:
-            break
-        except Exception as e:
-            print(e)
-        time_after_loop = time.process_time()
+            time_after_loop = time.process_time()
+except KeyboardInterrupt:
+    print("KeyboardInterrupt received. Stopping.")
+except Exception as e:
+    print("Error:", e)
+finally:
+    if arm.save_actions:
+        print("Saving and closing HDF5 file...")
+        arm.hdf5_file.flush()
+        arm.hdf5_file.close()
