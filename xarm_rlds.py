@@ -10,7 +10,6 @@ from xarm.wrapper import XArmAPI
 import h5py
 import numpy as np
 
-
 class xArm7GripperEnv:
     def __init__(self, robot_ip="192.168.1.198", arm_speed=1000, gripper_speed=1000, pos_step_size=50, rot_step_size=5, grip_size=100,task_name=" "):
         self.robot_ip = robot_ip
@@ -38,7 +37,6 @@ class xArm7GripperEnv:
         self.move_position(self.arm_starting_pose)
         self.arm.set_mode(5) # set catesian velocity
         self.arm.set_state(0)
-
 
         self.update_arm_state()
 
@@ -74,7 +72,6 @@ class xArm7GripperEnv:
         self.arm.motion_enable(True)
         self.arm.set_mode(0)
         self.arm.set_state(0)
-
 
 class PlayStationController(xArm7GripperEnv):
     MAX_TRIG_VAL = math.pow(2, 8)
@@ -135,37 +132,6 @@ class PlayStationController(xArm7GripperEnv):
         self.DownDPad = 0.0
         self.threshold = 0.2
 
-        #self._monitor_thread = threading.Thread(target=self._monitor_controller, args=())
-        #self._monitor_thread.daemon = True
-        # self.lock = threading.Lock()
-        #self._monitor_thread.start()
-
-    # def setup_action_save(self):
-    #     with open(self.action_save_path, "w") as f:
-    #         f.write("abs_pos, abs_rot, gripper, rel_pos, rel_rot\n")
-    #     print(f"Saving actions to {self.action_save_path}")
-
-    # def save_action(self, rel_action):
-    #     self.update_arm_state()
-    #     rel_pos = rel_action[0:3]
-    #     rel_rot = rel_action[3:5]
-    #     arm_pos_meters = [i / 1000 for i in self.arm_pos]
-    #     arm_rot_rad = [i * math.pi/180.0 for i in self.arm_rot]
-    #     gripper_pos_norm = self.gripper_pos/850.0
-    #     rel_pos_meters = [i / 1000 for i in self.arm_pos]
-    #     rel_rot_rad = [i * math.pi/180.0 for i in rel_rot]
-    #     with open(self.action_save_path, "a") as f:
-    #         f.write(f"{arm_pos_meters}, {arm_rot_rad}, {gripper_pos_norm}, {rel_pos_meters}, {rel_rot_rad}\n")
-    #     if self.save_video:
-    #         self.video_recorder.record_frame(action=arm_pos_meters) # for writing action on frame - Dominick
-
-    # def reset_save_file(self):
-    #     save_path = datetime.datetime.now().strftime(f"{self.save_root}/actions_%Y-%m-%d_%H-%M-%S") + ".csv"
-    #     self.action_save_path = save_path
-    #     self.setup_action_save()
-    #     if self.save_video:
-    #         self.video_recorder.reset()
-
     def setup_action_save(self):
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         self.hdf5_path = os.path.join(self.save_actions, f"actions_{timestamp}.hdf5")
@@ -180,7 +146,6 @@ class PlayStationController(xArm7GripperEnv):
 
         if self.save_video:
             self.video_recorder = VideoRecorder(self.save_video, webcam=self.webcam, frame_size=(1280, 800))
-
 
     def save_action(self, rel_action):
         self.update_arm_state()
@@ -305,25 +270,32 @@ class VideoRecorder:
     def record_frame(self, action_idx=None):
         ret, frame = self.cap.read()
         if ret:
-            frame = cv2.resize(frame, self.frame_size)
+            target_width = 840
+            target_height = 630
+            h, w, _ = frame.shape
+            if h < target_height or w < target_width:
+                print("Warning: Frame is smaller than crop size, skipping frame.")
+                return
+
+            # Calculate top-left corner of crop box
+            x_start = 50 + (w - target_width) // 2
+            y_start = (h - target_height) // 2 + 50
+            cropped_frame = frame[y_start:y_start + target_height, x_start:x_start + target_width]
             filename = f"frame_{self.frame_idx:05d}.jpg"
-            filepath = os.path.join(self.image_dir,filename)
+            filepath = os.path.join(self.image_dir, filename)
             print(filepath)
 
             # Optionally draw info
             if action_idx is not None:
-                frame = cv2.putText(frame, str(action_idx), (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255), 2)
-
+                cropped_frame = cv2.putText(cropped_frame, str(action_idx), (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255), 2)
+            #resize image
+            resized_down = cv2.resize(cropped_frame, (640, 480), interpolation= cv2.INTER_LINEAR)
             # Save image
-            cv2.imwrite(filepath, frame)
+            cv2.imwrite(filepath, resized_down)
             self.image_paths.append(filepath)
             self.frame_idx += 1
         else:
             print("Warning: Failed to capture frame")
-
-    def close(self):
-        self.cap.release()
-
 
 def parse_args():
     parser = argparse.ArgumentParser()

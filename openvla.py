@@ -10,7 +10,7 @@ from xarm.wrapper import XArmAPI
 import math
 import time
 import threading
-cap = cv2.VideoCapture(0)
+cap = cv2.VideoCapture(4)
 cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
 current_pos = [300,0,300]
@@ -78,6 +78,7 @@ while True:
 #     # Predict Action (7-DoF; un-normalize for BridgeData V2)
     inputs = processor(prompt, image).to("cuda:0", dtype=torch.bfloat16)
     action = vla.predict_action(**inputs, unnorm_key="bridge_orig", do_sample=False)
+    breakpoint()
     pos = [i * 1000 for i in action[:3]]
     current_pos[0] -= pos[0]
 
