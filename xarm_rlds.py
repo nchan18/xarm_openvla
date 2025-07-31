@@ -43,6 +43,8 @@ class xArm7GripperEnv:
         self.wait = False
         self.arm = XArmAPI(self.robot_ip)
         self.arm_starting_pose = (300, 0, 300, 180, 0, 0)
+        tcp_offset = [0, 0, 100, 0, 0, 0] 
+        self.arm.set_tcp_offset(tcp_offset)
         self.arm.set_mode(0)
         self.arm.set_state(0)
         self.arm.set_gripper_mode(0)
