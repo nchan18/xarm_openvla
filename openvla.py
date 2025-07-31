@@ -72,7 +72,6 @@ while True:
 
 # #    frame = frame[125:550, 132:472] # Debug: added by Dominick on Jun 6
     bgr_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-
     image: Image.Image = Image.fromarray(bgr_frame)
 
 #     # Predict Action (7-DoF; un-normalize for BridgeData V2)

@@ -27,7 +27,7 @@ class OpenVLAConf:
     model_family: str = "openvla"
     # pretrained_checkpoint: Union[str, Path] = "/mnt/data/dreilly1/openvla_trained_models/openvla_trained_xarm7_givenaction"
     # pretrained_checkpoint: Union[str, Path] = "/mnt/data/dreilly1/openvla_trained_models/openvla-7b+XArmToyDataset+b16+lr-0.0005+lora-r32+dropout-0.0--train_on_collected_xarmdata-GripperFix--image_aug--20000_chkpt"
-    pretrained_checkpoint: Union[str, Path] = "/mnt/data/dreilly1/openvla_trained_models/openvla-7b+XArmToyDataset+b16+lr-0.0005+lora-r32+dropout-0.0--train_on_collected_xarmdata-GripperFix-RemoveZeroActions--image_aug--20000_chkpt"
+    pretrained_checkpoint: Union[str, Path] = "/mnt/data/dreilly1/openvla_trained_models/openvla_trained_models/openvla-7b+RealWorldTask1_objectbowl+b16+lr-0.0005+lora-r32+dropout-0.0--RealTask1_objectbowl-RemoveZeroActions-run1--image_aug--20000_chkpt"
     load_in_8bit: bool = False
     load_in_4bit: bool = False
     center_crop: bool = False
@@ -70,7 +70,9 @@ arm.set_gripper_position(gripper_open_pos, wait=True)
 # arm.set_mode(5)
 # arm.set_state(0)
 
-prompt = "Pick up the blue cube and put it on the green plate"
+prompt = "Pick up the banana and place it in the white bowl"
+print(prompt)
+breakpoint()
 # Load Processor & VLA
 # processor = AutoProcessor.from_pretrained("openvla/openvla-7b", trust_remote_code=True)
 # vla = AutoModelForVision2Seq.from_pretrained(
