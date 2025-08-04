@@ -11,7 +11,7 @@ import pyrealsense2 as rs
 from xarm.wrapper import XArmAPI
 import h5py
 from scipy.spatial.transform import Rotation as R
-from oculus_reader.reader import OculusReader
+#from oculus_reader.reader import OculusReader
 from abc import ABC, abstractmethod
 
 # Helper Functions
@@ -240,17 +240,15 @@ class VRController(BaseController):
         velocity = np.concatenate([lin_vel, rot_vel])
         return velocity.tolist(), gripper_command
 
-# RealSense Recorder for Multiple Cameras
 class RealSenseRecorder:
-    def __init__(self, device_serials, camera_names, frame_size=(640, 480)):
-        self.pipelines = []
-        self.context = rs.context()
-        self.frame_size = frame_size
+    def __init__(self, device_serials, camera_names, frame_size=(640, 480), base_save_dir="."):
         self.time_stamp = time.strftime("%Y%m%d-%H%M%S")
-        self.image_dirs = [f"images_{name}_{self.time_stamp}" for name in camera_names]
+        self.image_dirs = [os.path.join(base_save_dir, f"images_{name}_{self.time_stamp}") for name in camera_names]
         self.image_paths = [[] for _ in camera_names]
         self.frame_idx = 0
+        self.frame_size = frame_size
         self.camera_names = camera_names
+        self.pipelines = []
 
         for dir in self.image_dirs:
             os.makedirs(dir, exist_ok=True)
@@ -263,6 +261,9 @@ class RealSenseRecorder:
             config.enable_stream(rs.stream.color, frame_size[0], frame_size[1], rs.format.bgr8, 30)
             try:
                 pipeline.start(config)
+                time.sleep(1)  # Wait for camera to stabilize
+                for _ in range(30):
+                    pipeline.wait_for_frames()
                 self.pipelines.append(pipeline)
             except Exception as e:
                 print(f"Failed to initialize RealSense camera {serial}: {e}")
@@ -277,7 +278,15 @@ class RealSenseRecorder:
                 continue
 
             color_image = np.asanyarray(color_frame.get_data())
+            color_image = cv2.cvtColor(color_image, cv2.COLOR_RGB2BGR)
+
+            # Skip if frame is too dark (likely blank or corrupted)
+            if color_image.mean() < 10:
+                print(f"Skipping frame {self.frame_idx} from camera {self.camera_names[i]} due to low brightness")
+                continue
+
             depth_image = np.asanyarray(depth_frame.get_data())
+
             resized_color_image = cv2.resize(color_image, self.frame_size)
             if action_idx is not None:
                 resized_color_image = cv2.putText(resized_color_image, str(action_idx), (10, 40),
@@ -285,8 +294,10 @@ class RealSenseRecorder:
 
             color_path = os.path.join(self.image_dirs[i], f"color_frame_{self.frame_idx:05d}.jpg")
             depth_path = os.path.join(self.image_dirs[i], f"depth_frame_{self.frame_idx:05d}.png")
+
             cv2.imwrite(color_path, resized_color_image)
             cv2.imwrite(depth_path, depth_image)
+
             self.image_paths[i].append({"color": color_path, "depth": depth_path})
 
         self.frame_idx += 1
@@ -297,20 +308,15 @@ class RealSenseRecorder:
 
 # Webcam Recorder
 class WebcamRecorder:
-    def __init__(self, device_ids, camera_names, frame_size=(640, 480)):
+    def __init__(self, device_ids, camera_names, frame_size=(640, 480), base_save_dir="."):
         self.cap = [cv2.VideoCapture(cam) for cam in device_ids]
-        for cap in self.cap:
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, frame_size[0])
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, frame_size[1])
-            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-            for _ in range(30):
-                cap.read()
-        self.camera_names = camera_names
         self.frame_size = frame_size
         self.time_stamp = time.strftime("%Y%m%d-%H%M%S")
-        self.image_dirs = [f"images_{name}_{self.time_stamp}" for name in camera_names]
+
+        self.image_dirs = [os.path.join(base_save_dir, f"images_{name}_{self.time_stamp}") for name in camera_names]
         self.image_paths = [[] for _ in camera_names]
         self.frame_idx = 0
+        self.camera_names = camera_names
 
         for dir in self.image_dirs:
             os.makedirs(dir, exist_ok=True)
@@ -321,11 +327,19 @@ class WebcamRecorder:
             if not ret or frame is None:
                 print(f"Warning: Failed to read from webcam {self.camera_names[i]}")
                 continue
+            
+            if frame.mean() < 10:
+                print(f"Skipping frame {self.frame_idx} from webcam {self.camera_names[i]} due to low brightness")
+                continue
+
             resized = cv2.resize(frame, self.frame_size)
             if action_idx is not None:
-                resized = cv2.putText(resized, str(action_idx), (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+                resized = cv2.putText(resized, str(action_idx), (10, 40),
+                                      cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+
             color_path = os.path.join(self.image_dirs[i], f"color_frame_{self.frame_idx:05d}.jpg")
             cv2.imwrite(color_path, resized)
+
             self.image_paths[i].append({"color": color_path, "depth": None})
 
         self.frame_idx += 1
@@ -336,18 +350,18 @@ class WebcamRecorder:
 
 # Camera Manager
 class CameraManager:
-    def __init__(self, realsense_ids, webcam_ids, realsense_names, webcam_names, frame_size=(640, 480)):
+    def __init__(self, realsense_ids, webcam_ids, realsense_names, webcam_names, frame_size=(640, 480), base_save_dir="."):
         self.recorders = []
         self.image_paths = []
         self.camera_names = realsense_names + webcam_names
 
         if realsense_ids:
-            rs_recorder = RealSenseRecorder(realsense_ids, realsense_names, frame_size)
+            rs_recorder = RealSenseRecorder(realsense_ids, realsense_names, frame_size, base_save_dir=base_save_dir)
             self.recorders.append(rs_recorder)
             self.image_paths.extend(rs_recorder.image_paths)
 
         if webcam_ids:
-            wc_recorder = WebcamRecorder(webcam_ids, webcam_names, frame_size)
+            wc_recorder = WebcamRecorder(webcam_ids, webcam_names, frame_size, base_save_dir=base_save_dir)
             self.recorders.append(wc_recorder)
             self.image_paths.extend(wc_recorder.image_paths)
 
@@ -356,7 +370,7 @@ class CameraManager:
 
     def record_frame(self, action_idx=None):
         for recorder in self.recorders:
-            recorder.record_frame(action_idx)
+            recorder.record_frame(action_idx=action_idx)
 
     def stop(self):
         for recorder in self.recorders:
@@ -416,7 +430,8 @@ class ControlSystem:
             realsense_ids=config["realsense_ids"],
             webcam_ids=config["webcam_ids"],
             realsense_names=config["realsense_names"],
-            webcam_names=config["webcam_names"]
+            webcam_names=config["webcam_names"],
+            base_save_dir=config["save_dir"]
         )
         self.data_recorder = HDF5Recorder(
             save_dir=config["save_dir"],
@@ -438,7 +453,8 @@ class ControlSystem:
                 self.arm.gripper_close()
             self.camera_manager.record_frame(action_idx=step)
             image_paths = [path[-1] for path in self.camera_manager.image_paths]
-            self.data_recorder.record_step(action=velocity + [gripper_command], image_paths=image_paths)
+            gripper_value = {'open': 1.0, 'close': 0.0, 'none': -1.0}[gripper_command]
+            self.data_recorder.record_step(action=velocity + [gripper_value], image_paths=image_paths)
             time.sleep(0.05)
         self.data_recorder.save()
         self.camera_manager.stop()
@@ -448,11 +464,11 @@ def parse_args():
     parser = argparse.ArgumentParser(description="xArm Control with VR or PlayStation Controller")
     parser.add_argument("--controller_type", type=str, default="playstation", choices=["playstation", "vr"],
                         help="Type of controller to use")
-    parser.add_argument("--task_name", type=str, default="default_task", help="Name of the task")
-    parser.add_argument("--save_dir", type=str, default="/workspace/xarm-dataset", help="Directory to save data")
+    parser.add_argument("--task_name", type=str, default="pick up carrot and place in bowl", help="Name of the task")
+    parser.add_argument("--save_dir", type=str, default=os.path.expanduser("~/workspace/xarm-dataset"), help="Directory to save data")
     parser.add_argument("--robot_ip", type=str, default="192.168.1.198", help="Robot IP address")
     parser.add_argument("--arm_speed", type=int, default=1000, help="Arm speed")
-    parser.add_argument("--gripper_speed", type=int, default=500, help="Gripper speed")
+    parser.add_argument("--gripper_speed", type=int, default=2000, help="Gripper speed")
     parser.add_argument("--pos_step_size", type=int, default=50, help="Position step size (PlayStation only)")
     parser.add_argument("--rot_step_size", type=int, default=15, help="Rotation step size (PlayStation only)")
     parser.add_argument("--realsense_ids", type=str, nargs="*", default=[], help="RealSense camera serial numbers")
