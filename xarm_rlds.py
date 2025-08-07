@@ -27,7 +27,7 @@ class xArm7GripperEnv:
         self.wait = False
         self.save_video = False
         self.arm = XArmAPI(self.robot_ip)
-        self.arm_starting_pose = (300, 0, 300, 180, 0, 0)
+        self.arm_starting_pose = (300, 0, 170, 180, 0, 0)
         self.arm.set_mode(0) # set_position
         self.arm.set_state(0)
         code = self.arm.set_gripper_mode(0)
@@ -240,14 +240,14 @@ class PlayStationController(xArm7GripperEnv):
                 action[1] = self.pos_step_size
                 print("y_plus")
 
+        Z_LOWER_LIMIT = 35
         if abs(RightJoystickY) > self.threshold:
             if RightJoystickY > 0:
-                if self.arm_pos[2] > 45 and self.gripper_state ==1:
+                if self.arm_pos[2] - self.pos_step_size > Z_LOWER_LIMIT:
                     action[2] = -self.pos_step_size
                     print("z_minus")
-                if self.arm_pos[2] > 50 and self.gripper_state ==0:
-                    action[2] = -self.pos_step_size
-                    print("z_minus")
+                else:
+                    print("Z limit reached")
             else:
                 action[2] = self.pos_step_size
                 print("z_plus")
@@ -375,10 +375,10 @@ def parse_args():
     return parser.parse_args()
 
 # args = parse_args()
-save_path = "/workspace/xarm-dataset"
+save_path = "/home/skapse/workspace/xarm-dataset"
 contorller_args = {
     "robot_ip": "192.168.1.198",
-    "save_path": "/workspace/xarm-dataset",
+    "save_path": "/home/skapse/workspace/xarm-dataset",
     "arm_speed": 1000,
     "gripper_speed": 2000,
     "pos_step_size": 50,
@@ -388,7 +388,7 @@ contorller_args = {
     "webcam_crop": [[720,720,280,0],[640,640,310,80]],
     "webcam_name": ["wristcam","exo1"],
     "flip_view": False,
-    "task_name": "pour apple from pink bowl into green bowl"
+    "task_name": "pick up carrot and place in bowl"
 }
 arm = PlayStationController(**contorller_args)
 
