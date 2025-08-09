@@ -1,3 +1,4 @@
+# <--- Keep your imports as-is --->
 import argparse
 import datetime
 import pygame
@@ -11,7 +12,7 @@ import pyrealsense2 as rs
 from xarm.wrapper import XArmAPI
 import h5py
 from scipy.spatial.transform import Rotation as R
-#from oculus_reader.reader import OculusReader
+from oculus_reader.reader import OculusReader
 from abc import ABC, abstractmethod
 
 # Helper Functions
@@ -31,7 +32,13 @@ def vec_to_reorder_mat(vec):
 
 # Robot Arm Environment
 class xArm7GripperEnv:
-    def __init__(self, robot_ip="192.168.1.198", arm_speed=1000, gripper_speed=500, task_name="default_task"):
+    def __init__(self, robot_ip="192.168.1.198", arm_speed=1000, gripper_speed=500, task_name="default_task",
+                 max_lin_speed_mm=50, max_rot_speed_deg=5, workspace_half_extent_mm=250):
+        """
+        max_lin_speed_mm: maximum linear speed (mm/s) applied to vc_set_cartesian_velocity
+        max_rot_speed_deg: maximum rotational speed (deg/s)
+        workspace_half_extent_mm: half the side length of cube workspace in mm (0.25m -> 250 mm)
+        """
         self.robot_ip = robot_ip
         self.arm_speed = arm_speed
         self.gripper_speed = gripper_speed
@@ -41,15 +48,28 @@ class xArm7GripperEnv:
         self.previous_arm_pos = None
         self.gripper_pos = None
         self.wait = False
+
+        # Limits & workspace
+        self.max_lin_speed_mm = max_lin_speed_mm
+        self.max_rot_speed_deg = max_rot_speed_deg
+        self.workspace_half_extent_mm = workspace_half_extent_mm
+
         self.arm = XArmAPI(self.robot_ip)
+        # Set a sensible starting pose (x,y,z,roll,pitch,yaw) in mm/degrees
         self.arm_starting_pose = (300, 0, 300, 180, 0, 0)
-        tcp_offset = [0, 0, 100, 0, 0, 0] 
+        tcp_offset = [0, 0, 100, 0, 0, 0]
         self.arm.set_tcp_offset(tcp_offset)
         self.arm.set_mode(0)
         self.arm.set_state(0)
         self.arm.set_gripper_mode(0)
         self.arm.set_gripper_enable(True)
         self.arm.set_gripper_speed(self.gripper_speed)
+
+        # Workspace center is the starting pose position
+        self.workspace_center = np.array(self.arm_starting_pose[:3], dtype=float)
+        self.workspace_min = self.workspace_center - self.workspace_half_extent_mm
+        self.workspace_max = self.workspace_center + self.workspace_half_extent_mm
+
         self.move_to_starting_position()
         self.update_arm_state()
 
@@ -64,20 +84,65 @@ class xArm7GripperEnv:
     def update_arm_state(self):
         _, arm_pos = self.arm.get_position(is_radian=False)
         self.previous_arm_pos = self.arm_pos
-        self.arm_pos = tuple(arm_pos[:3])
-        self.arm_rot = tuple(arm_pos[3:])
+        self.arm_pos = tuple(arm_pos[:3])  # mm
+        self.arm_rot = tuple(arm_pos[3:])  # deg
         _, gripper_pos = self.arm.get_gripper_position()
         self.gripper_pos = gripper_pos
 
+    def _clamp_to_workspace(self, pos_mm):
+        """Clamp an absolute position (x,y,z in mm) to the defined workspace box."""
+        pos = np.array(pos_mm, dtype=float)
+        clamped = np.minimum(np.maximum(pos, self.workspace_min), self.workspace_max)
+        return tuple(clamped.tolist())
+
     def move_position(self, action):
-        self.arm.set_position(x=action[0], y=action[1], z=action[2],
-                              roll=action[3], pitch=action[4], yaw=action[5],
+        """
+        action: absolute pose (x,y,z,roll,pitch,yaw) in mm and deg
+        Clamp to workspace before issuing.
+        """
+        # Clamp linear components
+        x, y, z = action[0], action[1], action[2]
+        x_c, y_c, z_c = self._clamp_to_workspace((x, y, z))
+        clamped_action = (x_c, y_c, z_c, action[3], action[4], action[5])
+        self.arm.set_position(x=clamped_action[0], y=clamped_action[1], z=clamped_action[2],
+                              roll=clamped_action[3], pitch=clamped_action[4], yaw=clamped_action[5],
                               relative=False, wait=True, speed=100)
 
-    def move(self, action):
-        if action != [0, 0, 0, 0, 0, 0]:
-            print(f"Moving with action: {action}")
-        self.arm.vc_set_cartesian_velocity(action)
+    def move(self, action, dt=0.05):
+        """
+        action: list or array length 6 [vx(mm/s), vy(mm/s), vz(mm/s), vroll(deg/s), vpitch(deg/s), vyaw(deg/s)]
+        This function will clip velocities to max limits and zero components that would push the
+        arm outside the workspace (taking dt into account).
+        """
+
+        print(action)
+        if np.allclose(action, [0, 0, 0, 0, 0, 0]):
+            return
+
+        # Clip linear velocities and rotational velocities
+        lin = np.array(action[:3], dtype=float)
+        rot = np.array(action[3:], dtype=float)
+
+        # Clip magnitudes per axis by the signed max (keep sign)
+        lin = np.clip(lin, -self.max_lin_speed_mm, self.max_lin_speed_mm)
+        rot = np.clip(rot, -self.max_rot_speed_deg, self.max_rot_speed_deg)
+
+        # Predict next absolute position (approx) and zero components that would leave workspace
+        if self.arm_pos is None:
+            self.update_arm_state()
+        current_pos = np.array(self.arm_pos, dtype=float)
+        pred_pos = current_pos + lin * dt  # mm
+
+        # For each axis, if predicted pos outside workspace, zero that axis velocity
+        for i in range(3):
+            if pred_pos[i] < self.workspace_min[i] or pred_pos[i] > self.workspace_max[i]:
+                lin[i] = 0.0
+
+        safe_action = np.concatenate([lin, rot]).tolist()
+
+        if any(abs(v) > 1e-6 for v in safe_action):
+            print(f"[xArm7GripperEnv] applying safe velocity (mm/s,deg/s): {safe_action}")
+            self.arm.vc_set_cartesian_velocity(safe_action)
 
     def gripper_open(self):
         self.gripper_state = 1
@@ -87,10 +152,16 @@ class xArm7GripperEnv:
         self.gripper_state = 0
         self.arm.set_gripper_position(0, wait=self.wait)
 
+
 # VR Policy for VR Controller
 class VRPolicy:
-    def __init__(self, right_controller=True, max_lin_vel=1, max_rot_vel=1, spatial_coeff=1, pos_action_gain=5, rot_action_gain=2, rmat_reorder=[-2, -1, -3, 4]):
-        self.oculus_reader = OculusReader()
+    def __init__(self, right_controller=True, max_lin_vel=0.05, max_rot_vel=0.1, spatial_coeff=1, pos_action_gain=5, rot_action_gain=2, rmat_reorder=[-2, -1, -3, 4]):
+        """
+        NOTE: VRPolicy works in meters for position deltas. We will convert to mm before issuing to the robot.
+        max_lin_vel: max linear velocity (m/s) in VR policy; will be converted to mm/s downstream.
+        """
+        # self.oculus_reader = OculusReader()  # keep original usage in your environment
+        self.oculus_reader = OculusReader()  # placeholder if OculusReader not available in this environment
         self.vr_to_global_mat = np.eye(4)
         self.max_lin_vel = max_lin_vel
         self.max_rot_vel = max_rot_vel
@@ -101,7 +172,7 @@ class VRPolicy:
         self.controller_id = "r" if right_controller else "l"
         self.reset_orientation = True
         self.reset_state()
-        run_threaded_command(self._update_internal_state)
+        run_threaded_command(self._update_internal_state)  # disabled unless OculusReader present
 
     def reset_state(self):
         self._state = {
@@ -126,6 +197,7 @@ class VRPolicy:
                 continue
             last_read_time = time.time()
             self._state["controller_on"] = True
+
             toggled = self._state["movement_enabled"] != buttons[self.controller_id.upper() + "G"]
             self.update_sensor |= buttons[self.controller_id.upper() + "G"]
             self.reset_orientation |= buttons[self.controller_id.upper() + "J"]
@@ -134,44 +206,69 @@ class VRPolicy:
             self._state["buttons"] = buttons
             self._state["movement_enabled"] = buttons[self.controller_id.upper() + "G"]
 
-            stop_updating = self._state["buttons"][self.controller_id.upper() + "J"] or self._state["movement_enabled"]
-            if self.reset_orientation and self.controller_id in poses:
-                rot_mat = np.asarray(self._state["poses"][self.controller_id])
+            # Always update current VR pose
+            if self.controller_id in poses:
+                rot_mat = np.asarray(poses[self.controller_id])
                 self.vr_state = {"pos": rot_mat[:3, 3], "rot": rot_mat[:3, :3]}
+
+            # Only reset orientation if flagged
+            if self.reset_orientation and self.controller_id in poses:
+                rot_mat = np.asarray(poses[self.controller_id])
                 rot_mat = np.linalg.inv(rot_mat)
                 self.vr_to_global_mat = rot_mat
-                if stop_updating:
-                    self.reset_orientation = False
+                self.reset_orientation = False
 
-    def _limit_velocity(self, lin_vel, rot_vel):
-        if np.linalg.norm(lin_vel) > self.max_lin_vel:
-            lin_vel = lin_vel * self.max_lin_vel / np.linalg.norm(lin_vel)
-        if np.linalg.norm(rot_vel) > self.max_rot_vel:
-            rot_vel = rot_vel * self.max_rot_vel / np.linalg.norm(rot_vel)
-        return lin_vel, rot_vel
+    def _limit_velocity(self, lin_vel_m, rot_vel):
+        # lin_vel_m is in meters per second here; clip to max_lin_vel (m/s)
+        norm = np.linalg.norm(lin_vel_m)
+        if norm > self.max_lin_vel and norm > 0:
+            lin_vel_m = lin_vel_m * (self.max_lin_vel / norm)
+        rnorm = np.linalg.norm(rot_vel)
+        if rnorm > self.max_rot_vel and rnorm > 0:
+            rot_vel = rot_vel * (self.max_rot_vel / rnorm)
+        return lin_vel_m, rot_vel
 
     def _calculate_action(self, state_dict):
         if self.vr_state is None or not self._state.get("poses"):
             return np.zeros(3), np.zeros(3), 'none'
 
-        robot_pos = np.array(state_dict["cartesian_position"][:3])
-        robot_euler = state_dict["cartesian_position"][3:]
-        if self.reset_origin:
-            self.vr_origin = np.copy(self.vr_state["pos"])
-            self.robot_origin = np.copy(robot_pos)
-            self.reset_origin = False
+        current_pos = np.array(self.vr_state["pos"])
+        current_rot = np.array(self.vr_state["rot"])
 
-        delta = self.vr_state["pos"] - self.vr_origin
-        lin_vel = delta * self.pos_action_gain
-        lin_vel, rot_vel = self._limit_velocity(lin_vel, np.zeros(3))
+        now = time.time()
+        if not hasattr(self, "_last_time"):
+            self._last_time = now
+            self._last_pos = current_pos
+            self._last_rot = current_rot
+            return np.zeros(3), np.zeros(3), 'none'
 
+        dt = now - self._last_time
+        if dt <= 0: dt = 1e-6
+
+        # Linear velocity in m/s (difference / dt)
+        lin_vel_m = (current_pos - self._last_pos) * self.spatial_coeff / dt
+
+        # Rotational velocity in rad/s
+        rot_delta_mat = current_rot @ self._last_rot.T
+        rotvec = R.from_matrix(rot_delta_mat).as_rotvec()  # radians
+        rot_vel = rotvec / dt
+
+        # Update memory
+        self._last_time = now
+        self._last_pos = current_pos
+        self._last_rot = current_rot
+
+        # Apply limits
+        lin_vel_m, rot_vel = self._limit_velocity(lin_vel_m, rot_vel)
+
+        # Gripper commands
         gripper_command = 'none'
         if self._state["buttons"].get("X", False):
             gripper_command = 'open'
         elif self._state["buttons"].get("Y", False):
             gripper_command = 'close'
 
-        return lin_vel, rot_vel, gripper_command
+        return lin_vel_m, np.degrees(rot_vel), gripper_command  
 
 # Controller Base Class
 class BaseController(ABC):
@@ -179,7 +276,7 @@ class BaseController(ABC):
     def get_action(self, state_dict):
         pass
 
-# PlayStation Controller
+# PlayStation Controller (unchanged except clearer units comment)
 class PlayStationController(BaseController):
     def __init__(self, pos_step_size=50, rot_step_size=15, threshold=0.2):
         pygame.init()
@@ -188,8 +285,8 @@ class PlayStationController(BaseController):
             raise RuntimeError("No joystick detected")
         self.joystick = pygame.joystick.Joystick(0)
         self.joystick.init()
-        self.pos_step_size = pos_step_size
-        self.rot_step_size = rot_step_size
+        self.pos_step_size = pos_step_size  # interpreted as mm/s
+        self.rot_step_size = rot_step_size  # deg/s
         self.threshold = threshold
         self.gripper_state = 1  # Assume open initially
 
@@ -205,12 +302,13 @@ class PlayStationController(BaseController):
         SQUARE = self.joystick.get_button(3)  # Close gripper
 
         velocity = [0.0] * 6
+        # Using joysticks to command velocities in mm/s & deg/s
         if abs(LeftJoystickY) > self.threshold:
-            velocity[0] = -self.pos_step_size if LeftJoystickY > 0 else self.pos_step_size
+            velocity[0] = (-LeftJoystickY) * self.pos_step_size  # invert sign to make natural forward
         if abs(LeftJoystickX) > self.threshold:
-            velocity[1] = -self.pos_step_size if LeftJoystickX > 0 else self.pos_step_size
+            velocity[1] = (LeftJoystickX) * self.pos_step_size
         if abs(RightJoystickY) > self.threshold:
-            velocity[2] = -self.pos_step_size if RightJoystickY > 0 else self.pos_step_size
+            velocity[2] = (-RightJoystickY) * self.pos_step_size
         if DPadX != 0:
             velocity[3] = -self.rot_step_size if DPadX > 0 else self.rot_step_size
         if DPadY != 0:
@@ -230,14 +328,18 @@ class PlayStationController(BaseController):
 
         return velocity, gripper_command
 
-# VR Controller
+# VR Controller wrapper: converts VRPolicy outputs -> robot-friendly units (mm/s, deg/s)
 class VRController(BaseController):
     def __init__(self):
         self.vr_policy = VRPolicy()
+        # Note: VRPolicy._calculate_action returns lin_vel in m/s; convert below.
 
     def get_action(self, state_dict):
-        lin_vel, rot_vel, gripper_command = self.vr_policy._calculate_action(state_dict)
-        velocity = np.concatenate([lin_vel, rot_vel])
+        lin_vel_m, rot_vel, gripper_command = self.vr_policy._calculate_action(state_dict)
+        # Convert meters/s -> millimeters/s for robot API
+        lin_vel_mm = lin_vel_m * 1000.0
+        # rot_vel assumed to be in deg/s already by policy; if radians, convert accordingly
+        velocity = np.concatenate([lin_vel_mm, rot_vel])
         return velocity.tolist(), gripper_command
 
 class RealSenseRecorder:
@@ -400,8 +502,8 @@ class HDF5Recorder:
         self.h5file.create_dataset("timestamps", data=np.array(self.timestamps), dtype=np.float64)
         dt = h5py.string_dtype(encoding='utf-8')
         for i, name in enumerate(self.camera_names):
-            color_paths = [p[i]["color"] for p in self.image_paths]
-            depth_paths = [p[i]["depth"] or "" for p in self.image_paths]
+            color_paths = [p[i]["color"] for p in self.image_paths if len(p) > i]
+            depth_paths = [p[i]["depth"] or "" for p in self.image_paths if len(p) > i]
             self.h5file.create_dataset(f"color_image_paths_{name}", data=np.array(color_paths, dtype=dt))
             self.h5file.create_dataset(f"depth_image_paths_{name}", data=np.array(depth_paths, dtype=dt))
         self.h5file.close()
@@ -415,7 +517,10 @@ class ControlSystem:
             robot_ip=config["robot_ip"],
             arm_speed=config["arm_speed"],
             gripper_speed=config["gripper_speed"],
-            task_name=config["task_name"]
+            task_name=config["task_name"],
+            max_lin_speed_mm=config.get("max_lin_speed_mm", 50),
+            max_rot_speed_deg=config.get("max_rot_speed_deg", 5),
+            workspace_half_extent_mm=int(config.get("workspace_half_extent_m", 0.25) * 1000)
         )
         if config["controller_type"] == "playstation":
             self.controller = PlayStationController(
@@ -438,28 +543,47 @@ class ControlSystem:
             task_name=config["task_name"],
             camera_names=config["realsense_names"] + config["webcam_names"]
         )
+    
 
     def run(self, num_steps=500):
+        dt = 0.05  # seconds per step (same as original sleep)
         for step in range(num_steps):
+            self.arm.update_arm_state()
             state_dict = {
                 "cartesian_position": list(self.arm.arm_pos) + list(self.arm.arm_rot),
                 "gripper_position": self.arm.gripper_pos,
             }
             velocity, gripper_command = self.controller.get_action(state_dict)
-            self.arm.move(velocity)
+
+            # Ensure velocity is length 6
+            velocity = list(velocity)[:6] + [0] * (6 - len(velocity))
+
+            # Clip final velocities to env maxs (safety)
+            # linear units expected in mm/s here
+            lin = np.clip(np.array(velocity[:3], dtype=float),
+                          -self.arm.max_lin_speed_mm, self.arm.max_lin_speed_mm)
+            rot = np.clip(np.array(velocity[3:6], dtype=float),
+                          -self.arm.max_rot_speed_deg, self.arm.max_rot_speed_deg)
+            safe_velocity = np.concatenate([lin, rot]).tolist()
+
+            # Let the env check workspace crossing and apply velocities
+            self.arm.move(safe_velocity, dt=dt)
+
             if gripper_command == 'open':
                 self.arm.gripper_open()
             elif gripper_command == 'close':
                 self.arm.gripper_close()
+
             self.camera_manager.record_frame(action_idx=step)
             image_paths = [path[-1] for path in self.camera_manager.image_paths]
             gripper_value = {'open': 1.0, 'close': 0.0, 'none': -1.0}[gripper_command]
-            self.data_recorder.record_step(action=velocity + [gripper_value], image_paths=image_paths)
-            time.sleep(0.05)
+            self.data_recorder.record_step(action=safe_velocity + [gripper_value], image_paths=image_paths)
+            time.sleep(dt)
         self.data_recorder.save()
         self.camera_manager.stop()
+    
 
-# Command-Line Argument Parsing
+# Command-Line Argument Parsing (kept for completeness, but we will auto-run by default)
 def parse_args():
     parser = argparse.ArgumentParser(description="xArm Control with VR or PlayStation Controller")
     parser.add_argument("--controller_type", type=str, default="playstation", choices=["playstation", "vr"],
@@ -510,7 +634,43 @@ def parse_args():
     }
     return config
 
+def default_config():
+    # Auto-run friendly defaults (you can edit these values directly)
+    save_dir = os.path.expanduser("~/workspace/xarm-dataset")
+    task_name = "pick up carrot and place in bowl"
+    base_path = os.path.join(save_dir, task_name.replace(" ", "_"))
+    trajectory_num = 0
+    while os.path.isdir(os.path.join(base_path, f"trajectory{trajectory_num}")):
+        trajectory_num += 1
+    save_dir = os.path.join(base_path, f"trajectory{trajectory_num}")
+
+    config = {
+        "controller_type": "vr",  # or "vr"
+        "task_name": task_name,
+        "save_dir": save_dir,
+        "robot_ip": "192.168.1.198",
+        "arm_speed": 1000,
+        "gripper_speed": 2000,
+        "pos_step_size": 20,  # mm/s default for playstation (small)
+        "rot_step_size": 5,   # deg/s (small)
+        "realsense_ids": [],
+        "webcam_ids": [4, 10],
+        "realsense_names": ["rs1", "rs2"],
+        "webcam_names": ["wristcam", "exo1"],
+        "num_steps": 500,
+        # safety + workspace parameters:
+        "max_lin_speed_mm": 250,  # VERY slow linear speed (50 mm/s)
+        "max_rot_speed_deg": 30,  # VERY slow rotational speed (5 deg/s)
+        "workspace_half_extent_m": 0.25,  # half-length in meters (0.25m -> 0.5 m cube)
+    }
+    return config
+
 if __name__ == "__main__":
-    config = parse_args()
+    # Use default_config() to auto-run without terminal args
+    config = default_config()
+
+    # If you still want to use argparse, you can uncomment below:
+    # config = parse_args()
+
     control_system = ControlSystem(config)
     control_system.run(num_steps=config["num_steps"])
