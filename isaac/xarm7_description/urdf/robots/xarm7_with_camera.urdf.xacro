@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<robot name="xarm7" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+    <xacro:include filename="$(find xarm7_description)/urdf/parts/d455.urdf.xacro"/>
+    <xacro:include filename="$(find xarm7_description)/urdf/parts/xarm7.urdf.xacro" />
+    <xacro:include filename="$(find xarm7_description)/urdf/control/ros2_control.urdf.xacro" />
+    <xacro:include filename="$(find xarm7_description)/urdf/parts/xarm_gripper.urdf.xacro" />
+
+    <link name="base_link" />
+    <xacro:xarm7 parent="base_link" prefix="xarm7">
+        <origin
+            xyz="0 0 0"
+            rpy="0 0 0" />
+        <!-- rpy="0.30071 -0.18002 -0.550992654" /> -->
+        <!-- rpy="0.18002 -0.30071 0" /> -->
+
+    </xacro:xarm7>
+    <xacro:xarm_gripper_urdf prefix="xarm7_" parent="xarm7_camera_mount_link">
+        <origin xyz="0 0 0" rpy="0 0 -${3.1415/2}" />
+    </xacro:xarm_gripper_urdf>
+    <!-- parent *origin name=zed model=zed enable_gnss=false custom_baseline=0 *gnss_origin -->
+    <xacro:sensor_d455 name="d455" parent="xarm7_camera_mount_link" use_nominal_extrinsics="true">
+        <origin rpy=" 0 ${-3.14/2} ${3.14/2} " xyz="-0.05 -0.07 0.02" />
+    </xacro:sensor_d455>
+
+    <xacro:xarm7_control/>
+
+</robot>

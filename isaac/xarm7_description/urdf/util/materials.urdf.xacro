@@ -1,0 +1,86 @@
+<?xml version="1.0"?>
+
+<!--
+// Copyright 2024 Stereolabs
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+-->
+
+<robot xmlns:xacro="http://ros.org/wiki/xacro">
+<xacro:property name="realsense_materials_defined" default="false" />
+<xacro:unless value="${realsense_materials_defined}">
+    <xacro:property name="realsense_materials_defined" value="true" />
+    <material name="aluminum">
+        <color rgba="0.5 0.5 0.5 1" />
+    </material>
+    <material name="plastic">
+        <color rgba="0.1 0.1 0.1 1" />
+    </material>
+    <material name="zed_mat">
+        <color rgba="0.8 0.8 0.8 1.0" />
+    </material>
+    <material name="zedm_mat">
+        <color rgba="0 0 0 1.0" />
+    </material>
+    <material name="zed2_mat">
+        <color rgba="0.25 0.25 0.25 1.0" />
+    </material>
+    <material name="zed2i_mat">
+        <color rgba="0.25 0.25 0.25 1.0" />
+    </material>
+    <material name="zedx_mat">
+        <color rgba="0.25 0.25 0.25 1.0" />
+    </material>
+    <material name="zedxm_mat">
+        <color rgba="0.25 0.25 0.25 1.0" />
+    </material>
+    <material name="virtual_mat">
+        <color rgba="0.25 0.25 0.25 1.0" />
+    </material>
+    <material name="zedxonegs_mat">
+        <color rgba="0.25 0.25 0.25 1.0" />
+    </material>
+    <material name="zedxone4k_mat">
+        <color rgba="0.25 0.25 0.25 1.0" />
+    </material>
+ </xacro:unless>
+
+    <xacro:macro name="inertial_sphere" params="mass radius *origin">
+        <inertial>
+            <xacro:insert_block name="origin" />
+            <mass value="${mass}" />
+            <inertia ixx="${(2/5) * mass * (radius*radius)}" ixy="0.0" ixz="0.0"
+                iyy="${(2/5) * mass * (radius*radius)}" iyz="0.0"
+                izz="${(2/5) * mass * (radius*radius)}" />
+        </inertial>
+    </xacro:macro>
+
+    <xacro:macro name="inertial_box" params="mass x y z *origin">
+        <inertial>
+            <xacro:insert_block name="origin" />
+            <mass value="${mass}" />
+            <inertia ixx="${(1/12) * mass * (y*y+z*z)}" ixy="0.0" ixz="0.0"
+                iyy="${(1/12) * mass * (x*x+z*z)}" iyz="0.0" izz="${(1/12) * mass * (x*x+y*y)}" />
+        </inertial>
+    </xacro:macro>
+
+    <xacro:macro name="inertial_cylinder" params="mass length radius *origin">
+        <inertial>
+            <xacro:insert_block name="origin" />
+            <mass value="${mass}" />
+            <inertia ixx="${(1/12) * mass * (3*radius*radius + length*length)}" ixy="0.0" ixz="0.0"
+                iyy="${(1/12) * mass * (3*radius*radius + length*length)}" iyz="0.0"
+                izz="${(1/2) * mass * (radius*radius)}" />
+        </inertial>
+    </xacro:macro>
+</robot>
