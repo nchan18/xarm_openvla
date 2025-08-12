@@ -463,10 +463,10 @@ class VRPolicy:
         action = action.clip(-1, 1)
 
         # Return #
-        if include_info:
-            return action, info_dict
-        else:
-            return action
+        # if include_info:
+        #     return action, info_dict
+        # else:
+        return action
 
     def get_info(self):
         return {
@@ -550,12 +550,12 @@ class VRController(BaseController):
         # Note: VRPolicy._calculate_action returns lin_vel in m/s; convert below.
 
     def get_action(self, state_dict):
-        lin_vel_m, rot_vel, gripper_command = self.vr_policy._calculate_action(state_dict)
+        action = self.vr_policy._calculate_action(state_dict)
         # Convert meters/s -> millimeters/s for robot API
-        lin_vel_mm = lin_vel_m * 1000.0
+        lin_vel_mm = action[:3] * 1000.0
         # rot_vel assumed to be in deg/s already by policy; if radians, convert accordingly
-        velocity = np.concatenate([lin_vel_mm, rot_vel])
-        return velocity.tolist(), gripper_command
+        velocity = np.concatenate([lin_vel_mm, action[3:6]])
+        return velocity.tolist(), action[7]
 
 class RealSenseRecorder:
     def __init__(self, device_serials, camera_names, frame_size=(640, 480), base_save_dir="."):
@@ -775,7 +775,7 @@ class ControlSystem:
             }
             velocity, gripper_command = self.controller.get_action(state_dict)
 
-            self.arm.move(safe_velocity, dt=dt)
+            self.arm.move(velocity, dt=dt)
 
             if gripper_command == 'open':
                 self.arm.gripper_open()
@@ -785,7 +785,7 @@ class ControlSystem:
             self.camera_manager.record_frame(action_idx=step)
             image_paths = [path[-1] for path in self.camera_manager.image_paths]
             gripper_value = {'open': 1.0, 'close': 0.0, 'none': -1.0}[gripper_command]
-            self.data_recorder.record_step(action=safe_velocity + [gripper_value], image_paths=image_paths)
+            self.data_recorder.record_step(action=velocity + [gripper_value], image_paths=image_paths)
             time.sleep(dt)
         self.data_recorder.save()
         self.camera_manager.stop()
@@ -880,10 +880,10 @@ def default_config():
         "gripper_speed": 2000,
         "pos_step_size": 20,  # mm/s default for playstation (small)
         "rot_step_size": 5,   # deg/s (small)
-        "realsense_ids": [],
-        "webcam_ids": [4, 10],
-        "realsense_names": ["rs1", "rs2"],
-        "webcam_names": ["wristcam", "exo1"],
+        "realsense_ids": [341522301282,334622071624],
+        "webcam_ids": [],
+        "realsense_names": ["wristcam", "exo1"],
+        "webcam_names": [],
         "num_steps": 500,
         # safety + workspace parameters:
         "max_lin_speed_mm": 250,  # VERY slow linear speed (50 mm/s)
