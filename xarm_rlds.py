@@ -14,6 +14,114 @@ import h5py
 from scipy.spatial.transform import Rotation as R
 from oculus_reader.reader import OculusReader
 from abc import ABC, abstractmethod
+from rlcpy.Node import Node
+from std_msgs.msg import Float64MultiArray
+import numpy as np
+from scipy.spatial.transform import Rotation as R
+import multiprocessing
+import subprocess
+import threading
+
+
+def run_terminal_command(command):
+    process = subprocess.Popen(
+        command, stdout=subprocess.PIPE, stdin=subprocess.PIPE, shell=True, executable="/bin/bash", encoding="utf8"
+    )
+
+    return process
+
+
+def run_threaded_command(command, args=(), daemon=True):
+    thread = threading.Thread(target=command, args=args, daemon=daemon)
+    thread.start()
+
+    return thread
+
+
+def run_multiprocessed_command(command, args=()):
+    process = multiprocessing.Process(target=command, args=args)
+    process.start()
+
+    return process
+
+
+### Conversions ###
+def quat_to_euler(quat, degrees=False):
+    euler = R.from_quat(quat).as_euler("xyz", degrees=degrees)
+    return euler
+
+
+def euler_to_quat(euler, degrees=False):
+    return R.from_euler("xyz", euler, degrees=degrees).as_quat()
+
+
+def rmat_to_euler(rot_mat, degrees=False):
+    euler = R.from_matrix(rot_mat).as_euler("xyz", degrees=degrees)
+    return euler
+
+
+def euler_to_rmat(euler, degrees=False):
+    return R.from_euler("xyz", euler, degrees=degrees).as_matrix()
+
+
+def rmat_to_quat(rot_mat, degrees=False):
+    quat = R.from_matrix(rot_mat).as_quat()
+    return quat
+
+
+def quat_to_rmat(quat, degrees=False):
+    return R.from_quat(quat, degrees=degrees).as_matrix()
+
+
+### Subtractions ###
+def quat_diff(target, source):
+    result = R.from_quat(target) * R.from_quat(source).inv()
+    return result.as_quat()
+
+
+def angle_diff(target, source, degrees=False):
+    target_rot = R.from_euler("xyz", target, degrees=degrees)
+    source_rot = R.from_euler("xyz", source, degrees=degrees)
+    result = target_rot * source_rot.inv()
+    return result.as_euler("xyz")
+
+
+def pose_diff(target, source, degrees=False):
+    lin_diff = np.array(target[:3]) - np.array(source[:3])
+    rot_diff = angle_diff(target[3:6], source[3:6], degrees=degrees)
+    result = np.concatenate([lin_diff, rot_diff])
+    return result
+
+
+### Additions ###
+def add_quats(delta, source):
+    result = R.from_quat(delta) * R.from_quat(source)
+    return result.as_quat()
+
+
+def add_angles(delta, source, degrees=False):
+    delta_rot = R.from_euler("xyz", delta, degrees=degrees)
+    source_rot = R.from_euler("xyz", source, degrees=degrees)
+    new_rot = delta_rot * source_rot
+    return new_rot.as_euler("xyz", degrees=degrees)
+
+
+def add_poses(delta, source, degrees=False):
+    lin_sum = np.array(delta[:3]) + np.array(source[:3])
+    rot_sum = add_angles(delta[3:6], source[3:6], degrees=degrees)
+    result = np.concatenate([lin_sum, rot_sum])
+    return result
+
+
+### MISC ###
+def change_pose_frame(pose, frame, degrees=False):
+    R_frame = euler_to_rmat(frame[3:6], degrees=degrees)
+    R_pose = euler_to_rmat(pose[3:6], degrees=degrees)
+    t_frame, t_pose = frame[:3], pose[:3]
+    euler_new = rmat_to_euler(R_frame @ R_pose, degrees=degrees)
+    t_new = R_frame @ t_pose + t_frame
+    result = np.concatenate([t_new, euler_new])
+    return result
 
 # Helper Functions
 def euler_to_quat(euler_angles):
@@ -153,26 +261,81 @@ class xArm7GripperEnv:
         self.arm.set_gripper_position(0, wait=self.wait)
 
 
+class SimController(BaseController):
+    """
+    Dummy controller for simulation.  It ignores all hardware inputs and simply
+    forwards whatever velocity it receives from the real controller to a ROS2
+    topic.
+    """
+
+    def __init__(self, ros_topic="/xarm/velocity_cmd", node_name="xarm_sim_controller"):
+        if rclpy is None:
+            raise RuntimeError("rclpy not available – cannot run in sim mode.")
+        # Spin up the ROS2 node in a background thread so it does not block
+        self._ros_node = _SimRosNode(ros_topic, node_name)
+        threading.Thread(target=self._ros_node.spin, daemon=True).start()
+
+    def get_action(self, state_dict):
+        """
+        In simulation mode we don't need to read any hardware – the real
+        controller (PlayStation or VR) already produced a velocity vector.
+        We simply return that same vector so that ControlSystem can publish it.
+        """
+        # The base class expects us to return (velocity, gripper_command).
+        # We'll just forward whatever the underlying controller generated.
+        return state_dict["last_velocity"], state_dict.get("gripper_cmd", "none")
+
+
+class _SimRosNode(Node):
+    def __init__(self, topic_name, node_name):
+        super().__init__(node_name)
+        self.publisher_ = self.create_publisher(Float64MultiArray, topic_name, 10)
+        self.latest_cmd = None
+        # Spin in a separate thread so the node can be stopped cleanly.
+        self._stop_event = threading.Event()
+
+    def spin(self):
+        """Spin loop that publishes every 50 ms."""
+        while not rclpy.ok() or not self._stop_event.is_set():
+            if self.latest_cmd is not None:
+                msg = Float64MultiArray(data=self.latest_cmd)
+                self.publisher_.publish(msg)
+            rclpy.spin_once(self, timeout_sec=0.05)
+
+    def stop(self):
+        self._stop_event.set()
+        rclpy.shutdown()
+
 # VR Policy for VR Controller
 class VRPolicy:
-    def __init__(self, right_controller=True, max_lin_vel=0.05, max_rot_vel=0.1, spatial_coeff=1, pos_action_gain=5, rot_action_gain=2, rmat_reorder=[-2, -1, -3, 4]):
-        """
-        NOTE: VRPolicy works in meters for position deltas. We will convert to mm before issuing to the robot.
-        max_lin_vel: max linear velocity (m/s) in VR policy; will be converted to mm/s downstream.
-        """
-        # self.oculus_reader = OculusReader()  # keep original usage in your environment
-        self.oculus_reader = OculusReader()  # placeholder if OculusReader not available in this environment
+    def __init__(
+        self,
+        right_controller: bool = True,
+        max_lin_vel: float = 1,
+        max_rot_vel: float = 1,
+        max_gripper_vel: float = 1,
+        spatial_coeff: float = 1,
+        pos_action_gain: float = 5,
+        rot_action_gain: float = 2,
+        gripper_action_gain: float = 3,
+        rmat_reorder: list = [-2, -1, -3, 4],
+    ):
+        self.oculus_reader = OculusReader()
         self.vr_to_global_mat = np.eye(4)
         self.max_lin_vel = max_lin_vel
         self.max_rot_vel = max_rot_vel
+        self.max_gripper_vel = max_gripper_vel
         self.spatial_coeff = spatial_coeff
         self.pos_action_gain = pos_action_gain
         self.rot_action_gain = rot_action_gain
+        self.gripper_action_gain = gripper_action_gain
         self.global_to_env_mat = vec_to_reorder_mat(rmat_reorder)
         self.controller_id = "r" if right_controller else "l"
         self.reset_orientation = True
         self.reset_state()
-        run_threaded_command(self._update_internal_state)  # disabled unless OculusReader present
+
+        # Start State Listening Thread #
+        run_threaded_command(self._update_internal_state)
 
     def reset_state(self):
         self._state = {
@@ -190,85 +353,137 @@ class VRPolicy:
     def _update_internal_state(self, num_wait_sec=5, hz=50):
         last_read_time = time.time()
         while True:
+            # Regulate Read Frequency #
             time.sleep(1 / hz)
-            poses, buttons = self.oculus_reader.get_transformations_and_buttons()
-            if not poses:
-                self._state["controller_on"] = (time.time() - last_read_time) < num_wait_sec
-                continue
-            last_read_time = time.time()
-            self._state["controller_on"] = True
 
+            # Read Controller
+            time_since_read = time.time() - last_read_time
+            poses, buttons = self.oculus_reader.get_transformations_and_buttons()
+            self._state["controller_on"] = time_since_read < num_wait_sec
+            if poses == {}:
+                continue
+
+            # Determine Control Pipeline #
             toggled = self._state["movement_enabled"] != buttons[self.controller_id.upper() + "G"]
-            self.update_sensor |= buttons[self.controller_id.upper() + "G"]
-            self.reset_orientation |= buttons[self.controller_id.upper() + "J"]
-            self.reset_origin |= toggled
+            self.update_sensor = self.update_sensor or buttons[self.controller_id.upper() + "G"]
+            self.reset_orientation = self.reset_orientation or buttons[self.controller_id.upper() + "J"]
+            self.reset_origin = self.reset_origin or toggled
+
+            # Save Info #
             self._state["poses"] = poses
             self._state["buttons"] = buttons
             self._state["movement_enabled"] = buttons[self.controller_id.upper() + "G"]
+            self._state["controller_on"] = True
+            last_read_time = time.time()
 
-            # Always update current VR pose
-            if self.controller_id in poses:
-                rot_mat = np.asarray(poses[self.controller_id])
-                self.vr_state = {"pos": rot_mat[:3, 3], "rot": rot_mat[:3, :3]}
-
-            # Only reset orientation if flagged
-            if self.reset_orientation and self.controller_id in poses:
-                rot_mat = np.asarray(poses[self.controller_id])
-                rot_mat = np.linalg.inv(rot_mat)
+            # Update Definition Of "Forward" #
+            stop_updating = self._state["buttons"][self.controller_id.upper() + "J"] or self._state["movement_enabled"]
+            if self.reset_orientation:
+                rot_mat = np.asarray(self._state["poses"][self.controller_id])
+                if stop_updating:
+                    self.reset_orientation = False
+                # try to invert the rotation matrix, if not possible, then just use the identity matrix
+                try:
+                    rot_mat = np.linalg.inv(rot_mat)
+                except:
+                    print(f"exception for rot mat: {rot_mat}")
+                    rot_mat = np.eye(4)
+                    self.reset_orientation = True
                 self.vr_to_global_mat = rot_mat
-                self.reset_orientation = False
 
-    def _limit_velocity(self, lin_vel_m, rot_vel):
-        # lin_vel_m is in meters per second here; clip to max_lin_vel (m/s)
-        norm = np.linalg.norm(lin_vel_m)
-        if norm > self.max_lin_vel and norm > 0:
-            lin_vel_m = lin_vel_m * (self.max_lin_vel / norm)
-        rnorm = np.linalg.norm(rot_vel)
-        if rnorm > self.max_rot_vel and rnorm > 0:
-            rot_vel = rot_vel * (self.max_rot_vel / rnorm)
-        return lin_vel_m, rot_vel
+    def _process_reading(self):
+        rot_mat = np.asarray(self._state["poses"][self.controller_id])
+        rot_mat = self.global_to_env_mat @ self.vr_to_global_mat @ rot_mat
+        vr_pos = self.spatial_coeff * rot_mat[:3, 3]
+        vr_quat = rmat_to_quat(rot_mat[:3, :3])
+        vr_gripper = self._state["buttons"]["rightTrig" if self.controller_id == "r" else "leftTrig"][0]
 
-    def _calculate_action(self, state_dict):
-        if self.vr_state is None or not self._state.get("poses"):
-            return np.zeros(3), np.zeros(3), 'none'
+        self.vr_state = {"pos": vr_pos, "quat": vr_quat, "gripper": vr_gripper}
 
-        current_pos = np.array(self.vr_state["pos"])
-        current_rot = np.array(self.vr_state["rot"])
+    def _limit_velocity(self, lin_vel, rot_vel, gripper_vel):
+        """Scales down the linear and angular magnitudes of the action"""
+        lin_vel_norm = np.linalg.norm(lin_vel)
+        rot_vel_norm = np.linalg.norm(rot_vel)
+        gripper_vel_norm = np.linalg.norm(gripper_vel)
+        if lin_vel_norm > self.max_lin_vel:
+            lin_vel = lin_vel * self.max_lin_vel / lin_vel_norm
+        if rot_vel_norm > self.max_rot_vel:
+            rot_vel = rot_vel * self.max_rot_vel / rot_vel_norm
+        if gripper_vel_norm > self.max_gripper_vel:
+            gripper_vel = gripper_vel * self.max_gripper_vel / gripper_vel_norm
+        return lin_vel, rot_vel, gripper_vel
 
-        now = time.time()
-        if not hasattr(self, "_last_time"):
-            self._last_time = now
-            self._last_pos = current_pos
-            self._last_rot = current_rot
-            return np.zeros(3), np.zeros(3), 'none'
+    def _calculate_action(self, state_dict, include_info=False):
+        # Read Sensor #
+        if self.update_sensor:
+            self._process_reading()
+            self.update_sensor = False
 
-        dt = now - self._last_time
-        if dt <= 0: dt = 1e-6
+        # Read Observation
+        robot_pos = np.array(state_dict["cartesian_position"][:3])
+        robot_euler = state_dict["cartesian_position"][3:]
+        robot_quat = euler_to_quat(robot_euler)
+        robot_gripper = state_dict["gripper_position"]
 
-        # Linear velocity in m/s (difference / dt)
-        lin_vel_m = (current_pos - self._last_pos) * self.spatial_coeff / dt
+        # Reset Origin On Release #
+        if self.reset_origin:
+            self.robot_origin = {"pos": robot_pos, "quat": robot_quat}
+            self.vr_origin = {"pos": self.vr_state["pos"], "quat": self.vr_state["quat"]}
+            self.reset_origin = False
 
-        # Rotational velocity in rad/s
-        rot_delta_mat = current_rot @ self._last_rot.T
-        rotvec = R.from_matrix(rot_delta_mat).as_rotvec()  # radians
-        rot_vel = rotvec / dt
+        # Calculate Positional Action #
+        robot_pos_offset = robot_pos - self.robot_origin["pos"]
+        target_pos_offset = self.vr_state["pos"] - self.vr_origin["pos"]
+        pos_action = target_pos_offset - robot_pos_offset
 
-        # Update memory
-        self._last_time = now
-        self._last_pos = current_pos
-        self._last_rot = current_rot
+        # Calculate Euler Action #
+        robot_quat_offset = quat_diff(robot_quat, self.robot_origin["quat"])
+        target_quat_offset = quat_diff(self.vr_state["quat"], self.vr_origin["quat"])
+        quat_action = quat_diff(target_quat_offset, robot_quat_offset)
+        euler_action = quat_to_euler(quat_action)
 
-        # Apply limits
-        lin_vel_m, rot_vel = self._limit_velocity(lin_vel_m, rot_vel)
+        # Calculate Gripper Action #
+        gripper_action = (self.vr_state["gripper"] * 1.5) - robot_gripper
 
-        # Gripper commands
-        gripper_command = 'none'
-        if self._state["buttons"].get("X", False):
-            gripper_command = 'open'
-        elif self._state["buttons"].get("Y", False):
-            gripper_command = 'close'
+        # Calculate Desired Pose #
+        target_pos = pos_action + robot_pos
+        target_euler = add_angles(euler_action, robot_euler)
+        target_cartesian = np.concatenate([target_pos, target_euler])
+        target_gripper = self.vr_state["gripper"]
 
-        return lin_vel_m, np.degrees(rot_vel), gripper_command  
+        # Scale Appropriately #
+        pos_action *= self.pos_action_gain
+        euler_action *= self.rot_action_gain
+        gripper_action *= self.gripper_action_gain
+        lin_vel, rot_vel, gripper_vel = self._limit_velocity(pos_action, euler_action, gripper_action)
+
+        # Prepare Return Values #
+        info_dict = {"target_cartesian_position": target_cartesian, "target_gripper_position": target_gripper}
+        action = np.concatenate([lin_vel, rot_vel, [gripper_vel]])
+        action = action.clip(-1, 1)
+
+        # Return #
+        if include_info:
+            return action, info_dict
+        else:
+            return action
+
+    def get_info(self):
+        return {
+            "success": self._state["buttons"]["A"] if self.controller_id == 'r' else self._state["buttons"]["X"],
+            "failure": self._state["buttons"]["B"] if self.controller_id == 'r' else self._state["buttons"]["Y"],
+            "movement_enabled": self._state["movement_enabled"],
+            "controller_on": self._state["controller_on"],
+        }
+
+    def forward(self, obs_dict, include_info=False):
+        if self._state["poses"] == {}:
+            action = np.zeros(7)
+            if include_info:
+                return action, {}
+            else:
+                return action
+        return self._calculate_action(obs_dict["robot_state"], include_info=include_info)
 
 # Controller Base Class
 class BaseController(ABC):
@@ -531,6 +746,11 @@ class ControlSystem:
             self.controller = VRController()
         else:
             raise ValueError("Unknown controller_type")
+
+        if config["mode"] == "sim":
+            self.sim_ros_node = _SimRosNode(config["ros2_topic"], config["ros2_node_name"])
+            threading.Thread(target=self.sim_ros_node.spin, daemon=True).start()
+
         self.camera_manager = CameraManager(
             realsense_ids=config["realsense_ids"],
             webcam_ids=config["webcam_ids"],
@@ -555,18 +775,6 @@ class ControlSystem:
             }
             velocity, gripper_command = self.controller.get_action(state_dict)
 
-            # Ensure velocity is length 6
-            velocity = list(velocity)[:6] + [0] * (6 - len(velocity))
-
-            # Clip final velocities to env maxs (safety)
-            # linear units expected in mm/s here
-            lin = np.clip(np.array(velocity[:3], dtype=float),
-                          -self.arm.max_lin_speed_mm, self.arm.max_lin_speed_mm)
-            rot = np.clip(np.array(velocity[3:6], dtype=float),
-                          -self.arm.max_rot_speed_deg, self.arm.max_rot_speed_deg)
-            safe_velocity = np.concatenate([lin, rot]).tolist()
-
-            # Let the env check workspace crossing and apply velocities
             self.arm.move(safe_velocity, dt=dt)
 
             if gripper_command == 'open':
@@ -602,6 +810,25 @@ def parse_args():
     parser.add_argument("--webcam_names", type=str, nargs="*", default=["wristcam", "exo1"],
                         help="Names for webcams")
     parser.add_argument("--num_steps", type=int, default=500, help="Number of steps to run")
+    parser.add_argument(
+    "--mode",
+    type=str,
+    default="real",
+    choices=["real", "sim"],
+    help="Run against a real robot or publish commands to ROS2 for simulation."
+    )
+    parser.add_argument(
+        "--ros2_topic",
+        type=str,
+        default="/xarm/velocity_cmd",
+        help="ROS2 topic to publish velocity commands when in sim mode."
+    )
+    parser.add_argument(
+        "--ros2_node_name",
+        type=str,
+        default="xarm_sim_controller",
+        help="Name of the ROS2 node that publishes simulation commands."
+    )
     args = parser.parse_args()
 
     # Validate camera names
@@ -662,6 +889,10 @@ def default_config():
         "max_lin_speed_mm": 250,  # VERY slow linear speed (50 mm/s)
         "max_rot_speed_deg": 30,  # VERY slow rotational speed (5 deg/s)
         "workspace_half_extent_m": 0.25,  # half-length in meters (0.25m -> 0.5 m cube)
+        "mode": "real",          # ← new key, values: "real" or "sim"
+        "ros2_topic": "/xarm/velocity_cmd",   # topic name used when mode == "sim"
+        "ros2_node_name": "xarm_sim_controller",
+
     }
     return config
 
