@@ -23,7 +23,7 @@ from queue import Queue, Empty
 
 # Low-latency rates
 VR_UPDATE_HZ = 120
-ROBOT_UPDATE_HZ = 200
+ROBOT_UPDATE_HZ = 5
 
 def run_terminal_command(command):
     process = subprocess.Popen(
@@ -229,7 +229,7 @@ class xArm7GripperEnv:
 
     def move(self, action, dt=0.005):
         if action is None or np.allclose(action, [0, 0, 0, 0, 0, 0]):
-            return
+            self.arm.vc_set_cartesian_velocity([0, 0, 0, 0, 0, 0])
 
         lin = np.array(action[:3], dtype=float)
         rot = np.array(action[3:], dtype=float)
@@ -247,7 +247,7 @@ class xArm7GripperEnv:
         #         lin[i] = 0.0
 
         safe_action = np.concatenate([lin, rot]).tolist()
-
+        # print(safe_action)
         if any(abs(v) > 1e-6 for v in safe_action):
             # non-blocking velocity API call
             self.arm.vc_set_cartesian_velocity(safe_action)
@@ -345,7 +345,7 @@ class BaseController(ABC):
 
 # PlayStation Controller (unchanged)
 class PlayStationController(BaseController):
-    def __init__(self, pos_step_size=50, rot_step_size=15, threshold=0.2):
+    def __init__(self, pos_step_size=50, rot_step_size=15, threshold=0.4):
         pygame.init()
         pygame.joystick.init()
         if pygame.joystick.get_count() == 0:
@@ -370,9 +370,9 @@ class PlayStationController(BaseController):
 
         velocity = [0.0] * 6
         if abs(LeftJoystickY) > self.threshold:
-            velocity[0] = (-LeftJoystickY) * self.pos_step_size
+            velocity[0] = -1*(LeftJoystickY) * self.pos_step_size
         if abs(LeftJoystickX) > self.threshold:
-            velocity[1] = (LeftJoystickX) * self.pos_step_size
+            velocity[1] = (-LeftJoystickX) * self.pos_step_size
         if abs(RightJoystickY) > self.threshold:
             velocity[2] = (-RightJoystickY) * self.pos_step_size
         if DPadX != 0:
@@ -652,10 +652,10 @@ class RealSenseRecorder:
             depth_frame = frames.get_depth_frame()
             if not color_frame or not depth_frame:
                 print(f"Warning: Failed to get frames from RealSense camera {self.camera_names[i]}")
-                continue
+                continue    
 
             color_image = np.asanyarray(color_frame.get_data())
-            color_image = cv2.cvtColor(color_image, cv2.COLOR_RGB2BGR)
+            # color_image = cv2.cvtColor(color_image, cv2.COLOR_RGB2BGR)
             if color_image.mean() < 10:
                 print(f"Skipping frame {self.frame_idx} from camera {self.camera_names[i]} due to low brightness")
                 continue
@@ -667,9 +667,10 @@ class RealSenseRecorder:
                                                  cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
 
             color_path = os.path.join(self.image_dirs[i], f"color_frame_{self.frame_idx:05d}.jpg")
+            depth_colormap = cv2.applyColorMap(cv2.convertScaleAbs(depth_image, alpha=0.03), cv2.COLORMAP_JET)
             depth_path = os.path.join(self.image_dirs[i], f"depth_frame_{self.frame_idx:05d}.png")
             cv2.imwrite(color_path, resized_color_image)
-            cv2.imwrite(depth_path, depth_image)
+            cv2.imwrite(depth_path, depth_colormap)
             self.image_paths[i].append({"color": color_path, "depth": depth_path})
 
         self.frame_idx += 1
@@ -829,6 +830,7 @@ class ControlSystem:
     def run(self, num_steps=500):
         dt = 1.0 / ROBOT_UPDATE_HZ
         step =0
+
         while True:
             loop_start = time.time()
 
@@ -839,15 +841,17 @@ class ControlSystem:
             }
 
             velocity, gripper_command,pour = self.controller.get_action(state_dict)
+            print(velocity)
             # print(velocity)
             # Send velocity (non-blocking)
-            if velocity ==[0.0,0.0,0.0,0.0,0.0,0.0]:
-                if pour:
-                    self.arm.move_joint(7, 50)
-                else:
-                    self.arm.move_joint(7, 176)
-            else:
-                self.arm.move(velocity, dt=dt)
+            # if velocity ==[0.0,0.0,0.0,0.0,0.0,0.0]:
+            #     # if pour:
+            #     #     self.arm.move_joint(7, 50)
+            #     # else:
+            #     #     self.arm.move_joint(7, 176)
+            #     pass
+            # else:
+            self.arm.move(velocity, dt=dt)
 
             # Gripper handling: use latch behavior (only change target on explicit 'open' or 'close')
             if gripper_command == 'open':
@@ -913,6 +917,12 @@ def parse_args():
         default="xarm_sim_controller",
         help="Name of the ROS2 node that publishes simulation commands."
     )
+    parser.add_argument(
+        "--recording-speed",
+        type=int,
+        default=15,
+        help="At what Hz do you want to record the data"
+    )
     args = parser.parse_args()
 
     if len(args.realsense_names) != len(args.realsense_ids):
@@ -940,7 +950,8 @@ def parse_args():
         "webcam_ids": args.webcam_ids,
         "realsense_names": args.realsense_names,
         "webcam_names": args.webcam_names,
-        "num_steps": args.num_steps
+        "num_steps": args.num_steps,
+        "recording_speed": args.recording_speed
     }
     return config
 
@@ -962,11 +973,11 @@ def default_config():
         "robot_ip": "192.168.1.198",
         "arm_speed": 1000,
         "gripper_speed": 2000,
-        "pos_step_size": 20,
+        "pos_step_size": 50,
         "rot_step_size": 5,
-        "realsense_ids": ["341522301282","334622071624"],
+        "realsense_ids": ["341522301282",], #334622071624
         "webcam_ids": [],
-        "realsense_names": ["wristcam", "exo1"],
+        "realsense_names": ["exo1"], # wristcam
         "webcam_names": [],
         "num_steps": 500,
         "max_lin_speed_mm": 250,
@@ -975,6 +986,7 @@ def default_config():
         "mode": "real",
         "ros2_topic": "/xarm/velocity_cmd",
         "ros2_node_name": "xarm_sim_controller",
+        "recording_speed": 15
     }
     return config
 

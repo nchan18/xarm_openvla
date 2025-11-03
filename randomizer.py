@@ -24,7 +24,7 @@ for fruit in fruit_types:
     # Add to final list
     for bowl_loc, fruit_loc in configs:
         all_configs.append({
-            "fruit_type": fruit,
+            # "fruit_type": fruit,
             "bowl_location": bowl_loc+1,
             "fruit_location": fruit_loc+1
         })
