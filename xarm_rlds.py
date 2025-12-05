@@ -23,7 +23,7 @@ from queue import Queue, Empty
 
 # Low-latency rates
 VR_UPDATE_HZ = 120
-ROBOT_UPDATE_HZ = 5
+ROBOT_UPDATE_HZ = 15
 
 def run_terminal_command(command):
     process = subprocess.Popen(
@@ -830,52 +830,51 @@ class ControlSystem:
     def run(self, num_steps=500):
         dt = 1.0 / ROBOT_UPDATE_HZ
         step =0
+        try: 
+            while True:
 
-        while True:
-            loop_start = time.time()
+                loop_start = time.time()
 
-            self.arm.update_arm_state()
-            state_dict = {
-                "cartesian_position": list(self.arm.arm_pos) + list(self.arm.arm_rot),
-                "gripper_position": self.arm.gripper_pos,
-            }
+                self.arm.update_arm_state()
+                state_dict = {
+                    "cartesian_position": list(self.arm.arm_pos) + list(self.arm.arm_rot),
+                    "gripper_position": self.arm.gripper_pos,
+                }
 
-            velocity, gripper_command,pour = self.controller.get_action(state_dict)
-            print(velocity)
-            # print(velocity)
-            # Send velocity (non-blocking)
-            # if velocity ==[0.0,0.0,0.0,0.0,0.0,0.0]:
-            #     # if pour:
-            #     #     self.arm.move_joint(7, 50)
-            #     # else:
-            #     #     self.arm.move_joint(7, 176)
-            #     pass
-            # else:
-            self.arm.move(velocity, dt=dt)
+                velocity, gripper_command,pour = self.controller.get_action(state_dict)
+                
+                self.arm.move(velocity, dt=dt)
 
-            # Gripper handling: use latch behavior (only change target on explicit 'open' or 'close')
-            if gripper_command == 'open':
-                self.arm.gripper_open()
-            elif gripper_command == 'close':
-                self.arm.gripper_close()
-            # if 'none' do nothing (preserve previous target until reached)
+                # Gripper handling: use latch behavior (only change target on explicit 'open' or 'close')
+                if gripper_command == 'open':
+                    self.arm.gripper_open()
+                elif gripper_command == 'close':
+                    self.arm.gripper_close()
+                # if 'none' do nothing (preserve previous target until reached)
 
-            # Cameras (left as-is)
-            self.camera_manager.record_frame(action_idx=step)
-            image_paths = [path[-1] for path in self.camera_manager.image_paths]
+                # Cameras (left as-is)
+                self.camera_manager.record_frame(action_idx=step)
+                image_paths = [path[-1] for path in self.camera_manager.image_paths]
 
-            gripper_value = {'open': 1.0, 'close': 0.0, 'none': -1.0}[gripper_command]
-            self.data_recorder.record_step(action=velocity + [gripper_value], image_paths=image_paths)
+                gripper_value = {'open': 1.0, 'close': 0.0, 'none': -1.0}[gripper_command]
+                self.data_recorder.record_step(action=velocity + [gripper_value], image_paths=image_paths)
 
-            elapsed = time.time() - loop_start
-            to_sleep = dt - elapsed
-            if to_sleep > 0:
-                time.sleep(to_sleep)
-            
-            step +=1
+                elapsed = time.time() - loop_start
+                to_sleep = dt - elapsed
+                if to_sleep > 0:
+                    time.sleep(to_sleep)
+                
+                step +=1
+        except KeyboardInterrupt:
+            print("Interrupted by user. Saving data...")
 
-        self.data_recorder.save()
-        self.camera_manager.stop()
+        except Exception as e:
+            print(f"The error was:{e}")
+
+        finally:
+            self.data_recorder.save()
+            self.camera_manager.stop()
+
 
 
 # Arg parsing and defaults (unchanged)
@@ -958,7 +957,7 @@ def parse_args():
 
 def default_config():
     save_dir = os.path.expanduser("~/workspace/xarm-dataset")
-    task_name = "pick up carrot and place in bowl"
+    task_name = "test"
     base_path = os.path.join(save_dir, task_name.replace(" ", "_"))
     trajectory_num = 0
     while os.path.isdir(os.path.join(base_path, f"trajectory{trajectory_num}")):
@@ -966,7 +965,7 @@ def default_config():
     save_dir = os.path.join(base_path, f"trajectory{trajectory_num}")
 
     config = {
-        "controller_type": "vr",
+        "controller_type": "playstation",
         "task_name": task_name,
         "task_type": "pick_and_place",
         "save_dir": save_dir,
@@ -974,7 +973,7 @@ def default_config():
         "arm_speed": 1000,
         "gripper_speed": 2000,
         "pos_step_size": 50,
-        "rot_step_size": 5,
+        "rot_step_size": 15,
         "realsense_ids": ["341522301282",], #334622071624
         "webcam_ids": [],
         "realsense_names": ["exo1"], # wristcam

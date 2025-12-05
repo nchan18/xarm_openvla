@@ -6,7 +6,7 @@ import os
 
 class xArm7GripperEnv:
     def __init__(self, robot_ip="192.168.1.198", arm_speed=1000, gripper_speed=2000, task_name="default_task", task_type="pick_and_place",
-                 max_lin_speed_mm=50, max_rot_speed_deg=5, workspace_half_extent_mm=250):
+                 max_lin_speed_mm=50, max_rot_speed_deg=15, workspace_half_extent_mm=250):
         self.robot_ip = robot_ip
         self.arm_speed = arm_speed
         self.gripper_speed = gripper_speed
@@ -169,15 +169,24 @@ def hdf5_to_absolute_position(hdf5_file_path, output_file_path):
     absolute_rot = []
     joint_angles = []
     # Move each action with cycle time of 1/15 seconds
+    prev_gripper_action = 1.0
     cycle_time = 1.0 / 15.0
     for x , action in enumerate(actions):
         # print(f"Processing step {x+1}/{len(actions)}")
         loop_start = time.time()
         env.move(action[:6], dt=cycle_time)
+        
         if action[6] == 1.0:
             env.gripper_open()
+            prev_gripper_action = 1.0
         elif action[6] == 0.0:
             env.gripper_close()
+            prev_gripper_action = 0.0
+
+        if action[6] == -1.0:
+            action[6] = prev_gripper_action
+     
+
         env.update_arm_state()
         absolute_pos.append(env.arm_pos)
         absolute_rot.append(env.arm_rot)
@@ -210,5 +219,5 @@ if __name__ == "__main__":
             else :
                 continue    
         # hdf5_file_path = f"../xarm-dataset/fold_the_towel_twice/trajectory{i}/fold_the_towel_twice_20251119_204543.hdf5"
-        output_file_path = f"../xarm-dataset/rotate_carrot_180_degrees/trajectory{i}/updated_actions.hdf5"
+        output_file_path = f"../xarm-dataset/rotate_carrot_180_degrees/trajectory{i}/updated_actions_1_0.hdf5"
         hdf5_to_absolute_position(hdf5_file_path, output_file_path)
