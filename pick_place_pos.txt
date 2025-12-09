@@ -1,20 +1,58 @@
+pick place  carrot 
+Trial 0: Pick grape from location 9, place at location 7
 Trial 1: Pick corn from location 7, place at location 2
-Trial 2: Pick green pepper from location 7, place at location 6
+Trial 2: Pick grape from location 5, place at location 9
 Trial 3: Pick carrot from location 2, place at location 8
 Trial 4: Pick green apple from location 3, place at location 9 f
 Trial 5: Pick strawberry from location 7, place at location 3 f
-Trial 6: Pick orange from location 6, place at location 8 s
-Trial 7: Pick tomato from location 4, place at location 6 s
-Trial 8: Pick banana from location 4, place at location 8 f
-Trial 9: Pick eggplant from location 3, place at location 1 f
-Trial 10: Pick grape from location 8, place at location 3 s
-Trial 11: Pick corn from location 8, place at location 7
-Trial 12: Pick green pepper from location 4, place at location 1
-Trial 13: Pick carrot from location 9, place at location 8
-Trial 14: Pick green apple from location 4, place at location 9
-Trial 15: Pick strawberry from location 3, place at location 2
-Trial 16: Pick orange from location 5, place at location 3
-Trial 17: Pick tomato from location 5, place at location 2
-Trial 18: Pick banana from location 1, place at location 6
-Trial 19: Pick eggplant from location 1, place at location 5
-Trial 20: Pick grape from location 5, place at location 9
+Trial 6: Pick orange from location 6, place at location 8 
+Trial 7: Pick tomato from location 4, place at location 6 
+Trial 8 Pick eggplant from location 3, place at location 
+Trial 9 Pick grape from location 8, place at location 3 
+------------------------------------------------------------------
+Trial 11: (carrot, green pepper) 8 , 4 
+Trial 12: (carrot, lemon )location 4, place at location 3
+Trial 13: (banana , green pepper )from location 9, place at location 5
+Trial 14: (eggplant,banana ) from location 4, place at location 2
+Trial 15: (strawberry, peach) location 3, place at location 9
+Trial 16: (green pepper , grape) from location 3, place at location 5
+Trial 17: (peach, tomato )  from location 7, place at location 3
+Trial 18  (carrot lemon)on 4 place at location 6
+Trial 19: (eggplant , banana)  3, 9
+Trial 2:  (carrot ,green pepper) location 7, place at location 6
+-------------------------------------------------
+put eggplant on plate
+Trial 0: Pick grape from location 9, place at location 7
+Trial 1: Pick corn from location 2, place at location 7
+Trial 2: Pick grape from location 5, place at location 9
+Trial 3: Pick carrot from location 8, place at location 2
+Trial 4: Pick green apple from location 3, place at location 9 f
+Trial 5: Pick strawberry from location 7, place at location 3 f
+Trial 6: Pick orange from location 6, place at location 8 
+Trial 7: Pick tomato from location 4, place at location 6 
+Trial 8 Pick eggplant from location 3, place at location  1
+Trial 9 Pick grape from location 8, place at location 3 
+-------------------------------------------------------
+move blue block near green block
+(4, 8)
+2. (1, 5)
+3. (8, 3)
+4. (6, 2)
+5. (9, 5)
+6. (3, 8)
+7. (7, 1)
+8. (2, 6)
+9. (4, 9)
+10. (9, 3)
+
+lift cube 
+5
+4
+1
+2
+8
+7
+6
+9
+3
+7

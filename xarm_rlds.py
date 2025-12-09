@@ -764,15 +764,28 @@ class HDF5Recorder:
         self.action_data = []
         self.timestamps = []
         self.image_paths = []
+        self.absolute_pos = []
+        self.absolute_rot = []
+        self.joint_state = []
+        self.gripper = []
 
-    def record_step(self, action, image_paths):
+    def record_step(self,abs_pos,abs_rot,joint_state,gripper, action, image_paths):
         self.action_data.append(np.array(action, dtype=np.float32))
+        self.absolute_pos.append(np.array(abs_pos, dtype=np.float32))
+        self.absolute_rot.append(np.array(abs_rot, dtype=np.float32))
+        self.joint_state.append(np.array(joint_state, dtype=np.float32))
+        self.gripper.append(gripper)
         self.timestamps.append(time.time())
         self.image_paths.append(image_paths)
 
     def save(self):
         self.h5file.create_dataset("actions", data=np.array(self.action_data), dtype=np.float32)
         self.h5file.create_dataset("timestamps", data=np.array(self.timestamps), dtype=np.float64)
+        self.h5file.create_dataset("abs_jointstate",data=self.joint_state, dtype=np.float32)
+        self.h5file.create_dataset("abs_pos",data=np.array(self.absolute_pos), dtype=np.float32)
+        self.h5file.create_dataset("abs_rot",data=np.array(self.absolute_rot), dtype=np.float32)
+        self.h5file.create_dataset("gripper",data=np.array(self.gripper), dtype=np.float32)
+
         dt = h5py.string_dtype(encoding='utf-8')
         for i, name in enumerate(self.camera_names):
             color_paths = [p[i]["color"] for p in self.image_paths if len(p) > i]
@@ -857,7 +870,9 @@ class ControlSystem:
                 image_paths = [path[-1] for path in self.camera_manager.image_paths]
 
                 gripper_value = {'open': 1.0, 'close': 0.0, 'none': -1.0}[gripper_command]
-                self.data_recorder.record_step(action=velocity + [gripper_value], image_paths=image_paths)
+                self.arm.update_arm_state()
+                _, joints = self.arm.arm.get_servo_angle(is_radian=False)
+                self.data_recorder.record_step(abs_pos=self.arm.arm_pos, abs_rot = self.arm.arm_rot, joint_state = joints, gripper = gripper_value, action=velocity, image_paths=image_paths)
 
                 elapsed = time.time() - loop_start
                 to_sleep = dt - elapsed
@@ -957,7 +972,7 @@ def parse_args():
 
 def default_config():
     save_dir = os.path.expanduser("~/workspace/xarm-dataset")
-    task_name = "test"
+    task_name = "fold the towel twice"
     base_path = os.path.join(save_dir, task_name.replace(" ", "_"))
     trajectory_num = 0
     while os.path.isdir(os.path.join(base_path, f"trajectory{trajectory_num}")):
