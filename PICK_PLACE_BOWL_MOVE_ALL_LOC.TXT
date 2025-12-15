@@ -1,0 +1,80 @@
+Trial 1 — Shared locations: [7, 6, 1]
+  - banana: Pick from 6 → Place at 7
+  - corn: Pick from 1 → Place at 6
+0,0.5,1
+ Trial 2 — Shared locations: [4, 6, 8]
+  - corn: Pick from 6 → Place at 4
+  - lemon: Pick from 8 → Place at 6
+0,0.5,0.5,0.5
+ Trial 3 — Shared locations: [3, 1, 6]
+  - lemon: Pick from 6 → Place at 1
+  - banana: Pick from 3 → Place at 1
+0,0,0,0
+ Trial 4 — Shared locations: [4, 1, 8]
+  - tomato: Pick from 8 → Place at 1
+  - strawberry: Pick from 8 → Place at 4
+0,0,0,0
+ Trial 5 — Shared locations: [2, 5, 9]
+  - eggplant: Pick from 5 → Place at 2
+  - grape: Pick from 2 → Place at 5
+0,0.5,0.5,0.5
+ Trial 6 — Shared locations: [5, 2, 8]
+  - carrot: Pick from 2 → Place at 8
+  - clementine: Pick from 2 → Place at 5
+0,0.5,0.5,0
+ Trial 7 — Shared locations: [8, 2, 3]
+  - corn: Pick from 2 → Place at 3
+  - banana: Pick from 2 → Place at 3
+0,0.5,0.5,0.5
+ Trial 8 — Shared locations: [8, 6, 1]
+  - clementine: Pick from 8 → Place at 1
+  - carrot: Pick from 6 → Place at 8
+0,0,0,0
+ Trial 9 — Shared locations: [1, 6, 2]
+  - grape: Pick from 1 → Place at 2
+  - eggplant: Pick from 2 → Place at 6
+0,0,0.5,0.5
+ Trial 10 — Shared locations: [5, 8, 6]
+  - strawberry: Pick from 5 → Place at 8
+  - tomato: Pick from 5 → Place at 6
+0,0,0,0
+ Trial 11 — Shared locations: [5, 7, 8]
+  - corn: Pick from 7 → Place at 5
+  - banana: Pick from 8 → Place at 5
+0,0.5,1
+ Trial 12 — Shared locations: [7, 8, 4]
+  - tomato: Pick from 8 → Place at 7
+  - strawberry: Pick from 8 → Place at 7
+0,0.5,0.5,0.5
+ Trial 13 — Shared locations: [4, 2, 3]
+  - corn: Pick from 4 → Place at 3
+  - lemon: Pick from 4 → Place at 3
+0,0,0,0.5
+ Trial 14 — Shared locations: [4, 6, 1]
+  - carrot: Pick from 1 → Place at 4
+  - clementine: Pick from 1 → Place at 4
+0,0,0.5,0.5
+ Trial 15 — Shared locations: [6, 3, 1]
+  - banana: Pick from 3 → Place at 1
+  - lemon: Pick from 1 → Place at 6
+0,0,0,0
+ Trial 16 — Shared locations: [1, 9, 2]
+  - eggplant: Pick from 1 → Place at 9
+  - grape: Pick from 1 → Place at 9
+0.5,0.5,0.5,1
+ Trial 17 — Shared locations: [9, 7, 6]
+  - corn: Pick from 9 → Place at 6
+  - banana: Pick from 7 → Place at 9
+0,0,0.5,0.5
+ Trial 18 — Shared locations: [2, 8, 3]
+  - lemon: Pick from 3 → Place at 2
+  - banana: Pick from 2 → Place at 8
+0,0,0.5,0
+ Trial 19 — Shared locations: [4, 6, 7]
+  - tomato: Pick from 4 → Place at 6
+  - strawberry: Pick from 4 → Place at 7
+0,0,0,0
+ Trial 20 — Shared locations: [1, 8, 4]
+  - carrot: Pick from 1 → Place at 4
+  - clementine: Pick from 4 → Place at 8
+  0,0,0,0

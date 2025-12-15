@@ -44,6 +44,15 @@ code = arm.set_gripper_enable(True)
 
 code = arm.set_gripper_speed(5000)
 
+# arm.set_servo_angle(servo_id=7, angle=-90, is_radian=False)
+target_joints = [-25.8,0.7,20.3,2.9,174.6,91.4,175.5]
+
+code = arm.set_servo_angle(angle=target_joints, speed=20, is_radian=False, wait=True)
+if code != 0:
+    print(f"⚠️ Failed to set joint angles, error code: {code}")
+
+time.sleep(1)
+
 arm.set_gripper_position(600, wait=True)
 
 arm.set_gripper_position(300, wait=True)

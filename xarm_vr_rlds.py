@@ -13,6 +13,8 @@ import h5py
 import sys
 from scipy.spatial.transform import Rotation as R
 from oculus_reader.reader import OculusReader
+import numpy as np
+from scipy.spatial.transform import Rotation as R
 
 def euler_to_quat(euler_angles):
     return R.from_euler('xyz', euler_angles, degrees=False).as_quat()
@@ -97,15 +99,15 @@ class xArm7GripperEnv:
 class VRPolicy:
     def __init__(
         self,
-        right_controller=True,
-        max_lin_vel=1,
-        max_rot_vel=1,
-        max_gripper_vel=1,
-        spatial_coeff=1,
-        pos_action_gain=5,
-        rot_action_gain=2,
-        gripper_action_gain=3,
-        rmat_reorder=[-2, -1, -3, 4],
+        right_controller: bool = True,
+        max_lin_vel: float = 1,
+        max_rot_vel: float = 1,
+        max_gripper_vel: float = 1,
+        spatial_coeff: float = 1,
+        pos_action_gain: float = 5,
+        rot_action_gain: float = 2,
+        gripper_action_gain: float = 3,
+        rmat_reorder: list = [-2, -1, -3, 4],
     ):
         self.oculus_reader = OculusReader()
         self.vr_to_global_mat = np.eye(4)
@@ -120,6 +122,8 @@ class VRPolicy:
         self.controller_id = "r" if right_controller else "l"
         self.reset_orientation = True
         self.reset_state()
+
+        # Start State Listening Thread #
         run_threaded_command(self._update_internal_state)
 
     def reset_state(self):
@@ -138,90 +142,121 @@ class VRPolicy:
     def _update_internal_state(self, num_wait_sec=5, hz=50):
         last_read_time = time.time()
         while True:
+            # Regulate Read Frequency #
             time.sleep(1 / hz)
-            poses, buttons = self.oculus_reader.get_transformations_and_buttons()
-            if not poses:
-                self._state["controller_on"] = (time.time() - last_read_time) < num_wait_sec
-                print("[VR] No poses received from OculusReader.")
-                continue
-            last_read_time = time.time()
-            self._state["controller_on"] = True
-            print("[VR] OculusReader returned poses:", poses.keys())
 
+            # Read Controller
+            time_since_read = time.time() - last_read_time
+            poses, buttons = self.oculus_reader.get_transformations_and_buttons()
+            self._state["controller_on"] = time_since_read < num_wait_sec
+            if poses == {}:
+                continue
+
+            # Determine Control Pipeline #
             toggled = self._state["movement_enabled"] != buttons[self.controller_id.upper() + "G"]
-            self.update_sensor |= buttons[self.controller_id.upper() + "G"]
-            self.reset_orientation |= buttons[self.controller_id.upper() + "J"]
-            self.reset_origin |= toggled
+            self.update_sensor = self.update_sensor or buttons[self.controller_id.upper() + "G"]
+            self.reset_orientation = self.reset_orientation or buttons[self.controller_id.upper() + "J"]
+            self.reset_origin = self.reset_origin or toggled
+
+            # Save Info #
             self._state["poses"] = poses
             self._state["buttons"] = buttons
             self._state["movement_enabled"] = buttons[self.controller_id.upper() + "G"]
             self._state["controller_on"] = True
             last_read_time = time.time()
 
+            # Update Definition Of "Forward" #
             stop_updating = self._state["buttons"][self.controller_id.upper() + "J"] or self._state["movement_enabled"]
             if self.reset_orientation:
-                print("[DEBUG] Received VR pose for controller:", self.controller_id)
-                print("[DEBUG] VR pose matrix:\n", self._state["poses"].get(self.controller_id, "Not Found"))
+                rot_mat = np.asarray(self._state["poses"][self.controller_id])
+                if stop_updating:
+                    self.reset_orientation = False
+                # try to invert the rotation matrix, if not possible, then just use the identity matrix
                 try:
-                    rot_mat = np.asarray(self._state["poses"][self.controller_id])
-                    self.vr_state = {
-                        "pos": rot_mat[:3, 3],
-                        "rot": rot_mat[:3, :3]
-                    }
                     rot_mat = np.linalg.inv(rot_mat)
-                    self.vr_to_global_mat = rot_mat
-                    if stop_updating:
-                        self.reset_orientation = False
-                except Exception as e:
-                    print(f"exception for rot mat: {e}")
+                except:
+                    print(f"exception for rot mat: {rot_mat}")
+                    rot_mat = np.eye(4)
                     self.reset_orientation = True
-                    self.vr_to_global_mat = np.eye(4)
+                self.vr_to_global_mat = rot_mat
 
     def _process_reading(self):
-        if not self._state.get("poses"):
-            print("Warning: poses dictionary is empty or missing.")
-            return
-        if self.controller_id not in self._state["poses"]:
-            print(f"Warning: controller_id '{self.controller_id}' not found in poses yet.")
-            return
         rot_mat = np.asarray(self._state["poses"][self.controller_id])
-        print(f"Rotation matrix for controller '{self.controller_id}':\n{rot_mat}")
+        rot_mat = self.global_to_env_mat @ self.vr_to_global_mat @ rot_mat
+        vr_pos = self.spatial_coeff * rot_mat[:3, 3]
+        vr_quat = rmat_to_quat(rot_mat[:3, :3])
+        vr_gripper = self._state["buttons"]["rightTrig" if self.controller_id == "r" else "leftTrig"][0]
+
+        self.vr_state = {"pos": vr_pos, "quat": vr_quat, "gripper": vr_gripper}
 
     def _limit_velocity(self, lin_vel, rot_vel, gripper_vel):
-        if np.linalg.norm(lin_vel) > self.max_lin_vel:
-            lin_vel = lin_vel * self.max_lin_vel / np.linalg.norm(lin_vel)
-        if np.linalg.norm(rot_vel) > self.max_rot_vel:
-            rot_vel = rot_vel * self.max_rot_vel / np.linalg.norm(rot_vel)
-        if np.linalg.norm(gripper_vel) > self.max_gripper_vel:
-            gripper_vel = gripper_vel * self.max_gripper_vel / np.linalg.norm(gripper_vel)
+        """Scales down the linear and angular magnitudes of the action"""
+        lin_vel_norm = np.linalg.norm(lin_vel)
+        rot_vel_norm = np.linalg.norm(rot_vel)
+        gripper_vel_norm = np.linalg.norm(gripper_vel)
+        if lin_vel_norm > self.max_lin_vel:
+            lin_vel = lin_vel * self.max_lin_vel / lin_vel_norm
+        if rot_vel_norm > self.max_rot_vel:
+            rot_vel = rot_vel * self.max_rot_vel / rot_vel_norm
+        if gripper_vel_norm > self.max_gripper_vel:
+            gripper_vel = gripper_vel * self.max_gripper_vel / gripper_vel_norm
         return lin_vel, rot_vel, gripper_vel
 
     def _calculate_action(self, state_dict, include_info=False):
-        if self.vr_state is None:
-            print("Warning: vr_state is None — skipping action calculation.")
-            return np.zeros(3), np.zeros(3), np.zeros(1)
-
+        # Read Sensor #
         if self.update_sensor:
             self._process_reading()
             self.update_sensor = False
 
+        # Read Observation
         robot_pos = np.array(state_dict["cartesian_position"][:3])
         robot_euler = state_dict["cartesian_position"][3:]
         robot_quat = euler_to_quat(robot_euler)
         robot_gripper = state_dict["gripper_position"]
 
+        # Reset Origin On Release #
         if self.reset_origin:
-            self.vr_origin = np.copy(self.vr_state["pos"])
-            self.robot_origin = np.copy(robot_pos)
+            self.robot_origin = {"pos": robot_pos, "quat": robot_quat}
+            self.vr_origin = {"pos": self.vr_state["pos"], "quat": self.vr_state["quat"]}
             self.reset_origin = False
 
-        delta = self.vr_state["pos"] - self.vr_origin
-        lin_vel = delta * self.pos_action_gain
-        lin_vel, rot_vel, gripper_vel = self._limit_velocity(lin_vel, np.zeros(3), np.array([robot_gripper]))
+        # Calculate Positional Action #
+        robot_pos_offset = robot_pos - self.robot_origin["pos"]
+        target_pos_offset = self.vr_state["pos"] - self.vr_origin["pos"]
+        pos_action = target_pos_offset - robot_pos_offset
 
+        # Calculate Euler Action #
+        robot_quat_offset = quat_diff(robot_quat, self.robot_origin["quat"])
+        target_quat_offset = quat_diff(self.vr_state["quat"], self.vr_origin["quat"])
+        quat_action = quat_diff(target_quat_offset, robot_quat_offset)
+        euler_action = quat_to_euler(quat_action)
+
+        # Calculate Gripper Action #
+        gripper_action = (self.vr_state["gripper"] * 1.5) - robot_gripper
+
+        # Calculate Desired Pose #
+        target_pos = pos_action + robot_pos
+        target_euler = add_angles(euler_action, robot_euler)
+        target_cartesian = np.concatenate([target_pos, target_euler])
+        target_gripper = self.vr_state["gripper"]
+
+        # Scale Appropriately #
+        pos_action *= self.pos_action_gain
+        euler_action *= self.rot_action_gain
+        gripper_action *= self.gripper_action_gain
+        lin_vel, rot_vel, gripper_vel = self._limit_velocity(pos_action, euler_action, gripper_action)
+
+        # Prepare Return Values #
+        info_dict = {"target_cartesian_position": target_cartesian, "target_gripper_position": target_gripper}
+        action = np.concatenate([lin_vel, rot_vel, [gripper_vel]])
+        action = action.clip(-1, 1)
+
+        # Return #
         if include_info:
-            return lin_vel, rot_vel, gripper_vel, robot_pos, robot_euler
-        return lin_vel, rot_vel, gripper_vel
+            return action, info_dict
+        else:
+            return action
+        
 
 class RealSenseVideoRecorder:
     def __init__(self, frame_size=(640, 480), depth_stream=True, rgb_stream=True):
@@ -306,28 +341,55 @@ class VRControlSystem:
         robot_ip = config.get("robot_ip", "192.168.1.198")
         self.robot = xArm7GripperEnv(robot_ip=robot_ip, arm_speed=arm_speed,
                                      gripper_speed=gripper_speed, task_name=task_name)
+        self.oculus_reader = OculusReader()
         self.vr_policy = VRPolicy()
         self.video_recorder = RealSenseVideoRecorder()
         self.hdf5_recorder = HDF5Recorder(task_name=task_name, save_dir=save_dir)
+        self.step = 0
+        self.current_pos = [0,0,0]
+        self.current_rot = [0,0,0]
 
-    def run(self, num_steps=100):
-        for step in range(num_steps):
-            lin_vel, rot_vel, gripper_vel = self.vr_policy._calculate_action({
-                "cartesian_position": list(self.robot.arm_pos) + list(self.robot.arm_rot),
-                "gripper_position": self.robot.gripper_pos,
-            })
-            pos = [i * 1000 for i in lin_vel]
-            rot = [i * 180/math.pi for i in rot_vel]
-            action_vec = pos + rot
+    def run(self):
+        while True:
+            # action = self._calculate_action(obs_dict["robot_state"], include_info=include_info)
+            transformations, buttons = self.oculus_reader.get_transformations_and_buttons()
+            if 'r' not in transformations:
+                continue
+
+            right_controller_pose = transformations['r']
+            right_controller_pose = np.vstack(right_controller_pose)
+
+            rotation_matrix = right_controller_pose[:3, :3]
+
+            # Convert to rotation object
+            rot = R.from_matrix(rotation_matrix)
+
+            # Get Euler angles in XYZ order (roll, pitch, yaw), in radians
+            euler_xyz = rot.as_euler('xyz', degrees=False)
+
+            # Convert to degrees (optional)
+            euler_xyz_deg = np.degrees(euler_xyz)
+            pos = [i * 1000 for i in euler_xyz]
+            rot = [i * 180/math.pi for i in euler_xyz_deg]
+
+            delta_pos = result_list = [a - b for a, b in zip(self.current_pos, pos)]
+            delta_pos = [i * 50 for i in delta_pos]
+            delta_rot = result_list = [a - b for a, b in zip(self.current_rot, rot)]
             
+            action_vec = delta_pos + delta_rot
+            print(f"Action:{action_vec}")
             self.robot.move(action_vec)
-            self.video_recorder.record_frame(action_idx=step)
+            self.current_pos = pos
+            self.current_rot = rot
+            self.video_recorder.record_frame(action_idx=self.step)
             last_image = self.video_recorder.image_path[-1]
             self.hdf5_recorder.record_step(action=action_vec,
                                            gripper_pos=self.robot.gripper_pos,
                                            color_path=last_image["color"],
                                            depth_path=last_image["depth"])
             time.sleep(0.05)
+            self.step += 1
+        
         self.hdf5_recorder.save()
         self.video_recorder.stop()
 
@@ -339,4 +401,4 @@ if __name__ == "__main__":
         "store_raw_images": False,
     }
     control_system = VRControlSystem(config=config)
-    control_system.run(num_steps=500)
+    control_system.run()
